@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from kavi.artifacts.writer import write_build_packet
+from kavi.forge.paths import skill_file_path, skill_test_path
 from kavi.ledger.models import (
     Artifact,
     Build,
@@ -128,3 +129,13 @@ def mark_build_failed(
         status=BuildStatus.FAILED,
         summary=summary,
     )
+
+
+def detect_build_result(proposal_name: str, project_root: Path) -> bool:
+    """Check if both skill file and test file exist at conventional paths.
+
+    Returns True if both files are present, False otherwise.
+    """
+    skill = skill_file_path(proposal_name, project_root)
+    test = skill_test_path(proposal_name, project_root)
+    return skill.is_file() and test.is_file()

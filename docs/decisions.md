@@ -116,3 +116,17 @@ Integrated as check #5 in `verify_skill()`. Also available standalone via `kavi 
 **Implication:** `all_ok` in verification now requires 5 checks to pass. Schema migrated to v2 with `invariant_ok` column.
 
 ---
+
+## D008: Auto-detect build result via conventional paths (2025-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** `mark-build-done` is a manual step that requires the user to remember to run it after Claude Code finishes. With convention-based paths (D006), we can detect build success automatically.
+
+**Decision:** Add `detect_build_result(proposal_name, project_root)` that checks if both `src/kavi/skills/{name}.py` and `tests/test_skill_{name}.py` exist. Remove `mark-build-done` CLI command entirely.
+
+**Rationale:** Eliminates a manual step in the pipeline. Convention-based detection is reliable since D006 established the naming convention as the single source of truth.
+
+**Implication:** `mark-build-done` CLI command removed. The underlying `mark_build_succeeded`/`mark_build_failed` functions remain in `build.py` for programmatic use.
+
+---

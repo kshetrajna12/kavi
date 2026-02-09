@@ -104,26 +104,8 @@ def build_skill_cmd(
     rprint(f"  Branch: {build.branch_name}")
     rprint(f"  Build packet: {artifact.path}")
     rprint("\n[yellow]Next:[/yellow] Run Claude Code with the build packet, then:")
-    rprint(f"  kavi mark-build-done {build.id}")
+    rprint(f"  kavi verify-skill {proposal_id}")
 
-
-@app.command("mark-build-done")
-def mark_build_done_cmd(
-    build_id: str = typer.Argument(help="Build ID to mark as done"),
-    failed: bool = typer.Option(False, "--failed", help="Mark as failed instead"),
-    summary: str = typer.Option("Build completed", help="Build summary"),
-) -> None:
-    """Mark a build as succeeded or failed."""
-    from kavi.forge.build import mark_build_failed, mark_build_succeeded
-
-    conn = _get_conn()
-    if failed:
-        mark_build_failed(conn, build_id, summary)
-        rprint(f"[red]Build {build_id} marked as FAILED[/red]")
-    else:
-        mark_build_succeeded(conn, build_id, summary)
-        rprint(f"[green]Build {build_id} marked as SUCCEEDED[/green]")
-    conn.close()
 
 
 @app.command("verify-skill")

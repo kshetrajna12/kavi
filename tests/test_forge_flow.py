@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from kavi.forge.build import build_skill, mark_build_succeeded
+from kavi.forge.build import build_skill, detect_build_result, mark_build_succeeded
 from kavi.forge.promote import promote_skill
 from kavi.forge.propose import propose_skill
 from kavi.forge.verify import CheckResult, SubprocessRunner, verify_skill
@@ -389,3 +389,35 @@ class TestVerifyIntegration:
         )
         assert verification.policy_ok is True
         assert Path(report.path).exists()
+
+
+class TestDetectBuildResult:
+    """Tests for auto-detection of build results."""
+
+    def test_both_files_exist(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
+
+        assert detect_build_result("write_note", tmp_path) is True
+
+    def test_skill_missing(self, tmp_path: Path) -> None:
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
+
+        assert detect_build_result("write_note", tmp_path) is False
+
+    def test_test_missing(self, tmp_path: Path) -> None:
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        assert detect_build_result("write_note", tmp_path) is False
+
+    def test_neither_exists(self, tmp_path: Path) -> None:
+        assert detect_build_result("write_note", tmp_path) is False
