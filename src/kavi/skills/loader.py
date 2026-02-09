@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +30,11 @@ def save_registry(registry_path: Path, skills: list[dict[str, Any]]) -> None:
         yaml.dump({"skills": skills}, f, default_flow_style=False, sort_keys=False)
 
 
-def import_skill(module_path: str) -> type[BaseSkill]:
-    """Import a skill class from a dotted module path (e.g. 'module.ClassName')."""
+def _import_skill(module_path: str) -> type[BaseSkill]:
+    """Import a skill class from a dotted module path (e.g. 'module.ClassName').
+
+    Private — only called by load_skill after trust verification.
+    """
     parts = module_path.rsplit(".", 1)
     if len(parts) != 2:
         raise ValueError(f"Invalid module path: {module_path}. Expected 'module.ClassName'.")
@@ -77,7 +81,14 @@ def load_skill(registry_path: Path, skill_name: str) -> BaseSkill:
             expected_hash = entry.get("hash")
             if expected_hash:
                 _verify_trust(entry["module_path"], expected_hash)
-            cls = import_skill(entry["module_path"])
+            else:
+                warnings.warn(
+                    f"Skill '{skill_name}' has no hash in registry — "
+                    "trust check skipped (re-promote to fix)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            cls = _import_skill(entry["module_path"])
             return cls()
     raise KeyError(f"Skill '{skill_name}' not found in registry")
 

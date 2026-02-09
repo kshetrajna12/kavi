@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from kavi.forge.build import (
+    _EXCLUDED_DIRS,
     _safe_copy_back,
     build_skill,
     create_sandbox,
@@ -62,6 +63,18 @@ def _init_git_repo(path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Sandbox creation tests
 # ---------------------------------------------------------------------------
+
+
+class TestExcludedDirs:
+    """Regression test for sandbox exclusion constants."""
+
+    def test_excluded_dirs_contains_required_entries(self) -> None:
+        """Ensure .git, .beads, .venv are always excluded from sandbox copies."""
+        for required in (".git", ".beads", ".venv"):
+            assert required in _EXCLUDED_DIRS, (
+                f"{required!r} missing from _EXCLUDED_DIRS — "
+                "sandbox would leak sensitive data"
+            )
 
 
 class TestCreateSandbox:
