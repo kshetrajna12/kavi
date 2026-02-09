@@ -45,6 +45,7 @@ class ArtifactKind(StrEnum):
     VERIFICATION_REPORT = "VERIFICATION_REPORT"
     NOTE = "NOTE"
     BUILD_PACKET = "BUILD_PACKET"
+    BUILD_LOG = "BUILD_LOG"
 
 
 # --- Pydantic Models ---

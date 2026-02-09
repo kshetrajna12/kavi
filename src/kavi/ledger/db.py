@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS skill_proposals (
@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS promotions (
 CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (
-        kind IN ('SKILL_SPEC', 'PATCH_SUMMARY', 'VERIFICATION_REPORT', 'NOTE', 'BUILD_PACKET')
+        kind IN ('SKILL_SPEC', 'PATCH_SUMMARY', 'VERIFICATION_REPORT',
+                 'NOTE', 'BUILD_PACKET', 'BUILD_LOG')
     ),
     path TEXT NOT NULL,
     sha256 TEXT NOT NULL,
@@ -84,6 +85,24 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
 MIGRATIONS: dict[int, list[str]] = {
     2: [
         "ALTER TABLE verifications ADD COLUMN invariant_ok INTEGER NOT NULL DEFAULT 0",
+    ],
+    3: [
+        # Widen artifacts.kind CHECK to include BUILD_LOG.
+        # SQLite cannot ALTER CHECK constraints, so recreate the table.
+        """CREATE TABLE artifacts_new (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK (
+                kind IN ('SKILL_SPEC', 'PATCH_SUMMARY', 'VERIFICATION_REPORT',
+                         'NOTE', 'BUILD_PACKET', 'BUILD_LOG')
+            ),
+            path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            related_id TEXT
+        )""",
+        "INSERT INTO artifacts_new SELECT * FROM artifacts",
+        "DROP TABLE artifacts",
+        "ALTER TABLE artifacts_new RENAME TO artifacts",
     ],
 }
 

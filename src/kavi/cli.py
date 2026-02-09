@@ -90,21 +90,53 @@ def propose_skill_cmd(
 @app.command("build-skill")
 def build_skill_cmd(
     proposal_id: str = typer.Argument(help="Proposal ID to build"),
+    invoke: bool = typer.Option(True, "--invoke/--no-invoke", help="Invoke Claude Code CLI"),
+    timeout: int = typer.Option(600, "--timeout", help="Build timeout in seconds"),
 ) -> None:
-    """Start a skill build (generates build packet for Claude Code)."""
-    from kavi.config import ARTIFACTS_OUT
-    from kavi.forge.build import build_skill
+    """Build a skill via Claude Code in a sandboxed workspace (D009)."""
+    from pathlib import Path
+
+    from kavi.config import ARTIFACTS_OUT, PROJECT_ROOT
+    from kavi.forge.build import build_skill, invoke_claude_build
 
     conn = _get_conn()
     build, artifact = build_skill(
         conn, proposal_id=proposal_id, output_dir=ARTIFACTS_OUT,
     )
-    conn.close()
     rprint(f"[green]Build started:[/green] {build.id}")
     rprint(f"  Branch: {build.branch_name}")
     rprint(f"  Build packet: {artifact.path}")
-    rprint("\n[yellow]Next:[/yellow] Run Claude Code with the build packet, then:")
-    rprint(f"  kavi verify-skill {proposal_id}")
+
+    if not invoke:
+        conn.close()
+        rprint("\n[yellow]Next:[/yellow] Run Claude Code with the build packet, then:")
+        rprint(f"  kavi verify-skill {proposal_id}")
+        return
+
+    rprint("\n[yellow]Invoking Claude Code in sandbox...[/yellow]")
+    from kavi.ledger.models import get_proposal
+    proposal = get_proposal(conn, proposal_id)
+    assert proposal is not None  # guaranteed by build_skill succeeding
+
+    success, sandbox_path = invoke_claude_build(
+        conn,
+        build=build,
+        proposal_name=proposal.name,
+        build_packet_path=Path(artifact.path),
+        project_root=PROJECT_ROOT,
+        output_dir=ARTIFACTS_OUT,
+        timeout=timeout,
+    )
+    conn.close()
+
+    if success:
+        rprint("[green]Build succeeded![/green] Allowlisted files copied to repo.")
+        rprint(f"\n[yellow]Next:[/yellow] kavi verify-skill {proposal_id}")
+    else:
+        rprint("[red]Build failed.[/red] Check build log in artifacts_out/")
+        if sandbox_path:
+            rprint(f"  Sandbox preserved at: {sandbox_path}")
+        raise typer.Exit(1)
 
 
 

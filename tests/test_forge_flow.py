@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from kavi.forge.build import build_skill, detect_build_result, mark_build_succeeded
+from kavi.forge.build import build_skill, diff_allowlist_gate, mark_build_succeeded
 from kavi.forge.promote import promote_skill
 from kavi.forge.propose import propose_skill
 from kavi.forge.verify import CheckResult, SubprocessRunner, verify_skill
@@ -391,10 +391,32 @@ class TestVerifyIntegration:
         assert Path(report.path).exists()
 
 
-class TestDetectBuildResult:
-    """Tests for auto-detection of build results."""
+class TestDiffAllowlistGate:
+    """Tests for the diff allowlist gate (D009)."""
 
-    def test_both_files_exist(self, tmp_path: Path) -> None:
+    def _init_git_sandbox(self, path: Path) -> None:
+        """Initialize a git repo with an initial commit for diff detection."""
+        import subprocess
+        subprocess.run(["git", "init"], cwd=str(path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(path), capture_output=True, check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"],
+            cwd=str(path), capture_output=True, check=True,
+        )
+        # Create a dummy file so we have an initial commit
+        (path / ".gitkeep").write_text("")
+        subprocess.run(["git", "add", "."], cwd=str(path), capture_output=True, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=str(path), capture_output=True, check=True,
+        )
+
+    def test_only_allowed_files_pass(self, tmp_path: Path) -> None:
+        self._init_git_sandbox(tmp_path)
+
         skill_dir = tmp_path / "src" / "kavi" / "skills"
         skill_dir.mkdir(parents=True)
         (skill_dir / "write_note.py").write_text("# skill")
@@ -403,21 +425,43 @@ class TestDetectBuildResult:
         test_dir.mkdir()
         (test_dir / "test_skill_write_note.py").write_text("# test")
 
-        assert detect_build_result("write_note", tmp_path) is True
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is True
+        assert len(result.allowed) == 2
+        assert result.violations == []
 
-    def test_skill_missing(self, tmp_path: Path) -> None:
-        test_dir = tmp_path / "tests"
-        test_dir.mkdir()
-        (test_dir / "test_skill_write_note.py").write_text("# test")
+    def test_extra_file_fails(self, tmp_path: Path) -> None:
+        self._init_git_sandbox(tmp_path)
 
-        assert detect_build_result("write_note", tmp_path) is False
-
-    def test_test_missing(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "src" / "kavi" / "skills"
         skill_dir.mkdir(parents=True)
         (skill_dir / "write_note.py").write_text("# skill")
 
-        assert detect_build_result("write_note", tmp_path) is False
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
 
-    def test_neither_exists(self, tmp_path: Path) -> None:
-        assert detect_build_result("write_note", tmp_path) is False
+        # Also modify a disallowed file
+        (tmp_path / "pyproject.toml").write_text("# hacked")
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is False
+        assert "pyproject.toml" in result.violations
+
+    def test_missing_required_files_fails(self, tmp_path: Path) -> None:
+        self._init_git_sandbox(tmp_path)
+
+        # Only create the skill, not the test
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is False
+
+    def test_no_changes_fails(self, tmp_path: Path) -> None:
+        self._init_git_sandbox(tmp_path)
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is False
+        assert "No files" in result.violations[0]

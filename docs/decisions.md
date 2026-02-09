@@ -119,7 +119,7 @@ Integrated as check #5 in `verify_skill()`. Also available standalone via `kavi 
 
 ## D008: Auto-detect build result via conventional paths (2025-02-09)
 
-**Status:** `CURRENT`
+**Status:** `SUPERSEDED by D009`
 
 **Context:** `mark-build-done` is a manual step that requires the user to remember to run it after Claude Code finishes. With convention-based paths (D006), we can detect build success automatically.
 
@@ -128,5 +128,41 @@ Integrated as check #5 in `verify_skill()`. Also available standalone via `kavi 
 **Rationale:** Eliminates a manual step in the pipeline. Convention-based detection is reliable since D006 established the naming convention as the single source of truth.
 
 **Implication:** `mark-build-done` CLI command removed. The underlying `mark_build_succeeded`/`mark_build_failed` functions remain in `build.py` for programmatic use.
+
+---
+
+## D009: Sandboxed build with diff allowlist (2026-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** D001 established Claude Code as the external build backend. D008 used `detect_build_result()` (file-exists check) to auto-detect build completion. But running Claude Code in the canonical repo working tree is insufficient as a safety boundary — it could modify any file. We need a tighter model.
+
+**Decision:** Build model A' — tools-enabled build in an isolated sandbox workspace.
+
+The `build-skill` flow is:
+
+1. **Build Packet (frozen)** — Generate `BUILD_PACKET_N` containing spec, I/O schema, constraints, allowed paths. The packet is epistemically closed: no new info discovery during the build attempt.
+
+2. **Sandbox workspace** — Copy repo to `/tmp/kavi-build/<attempt_id>/`. Strip git remotes, secrets, and credentials. The sandbox is throwaway.
+
+3. **Headless Claude Code invocation** — Run `claude -p --allowedTools [Edit,Write,Bash(limited)]` in the sandbox. Capture stdout/stderr + tool events as a build log artifact. No web/doc search during build.
+
+4. **Diff allowlist gate** — After Claude exits, run `git diff --name-only` in the sandbox. The changed files must be a strict subset of allowed paths (`src/kavi/skills/{name}.py`, `tests/test_skill_{name}.py`). Fail if anything else changed. Replaces `detect_build_result()`.
+
+5. **Verify in sandbox** — Run ruff/mypy/pytest/policy/invariants inside the sandbox, independently of Claude.
+
+6. **Patch to canonical** — If verify passes, copy only the allowlisted files from sandbox into the canonical repo. Claude Code has zero role in promote, ledger writes, or registry authority.
+
+**Iteration policy:** Iteration is across attempts, not within an attempt. If build/verify fails due to missing knowledge, run a research step (which may use web/docs) to update assumptions and regenerate `BUILD_PACKET_(N+1)`, then run Build Attempt N+1.
+
+**Network policy:** Claude Code requires LLM endpoint egress. The constraint is: allow only LLM endpoint, block everything else. Enforcement is environmental (container or host firewall), not in-process. The build phase itself does not browse docs.
+
+**Rationale:** Direct writes into the canonical repo are not a sufficient safety boundary. A sandbox + diff allowlist + independent verify provides defense in depth without introducing brittle stdout-parsing (model B). Model B (parse LLM output, write files ourselves) is kept as fallback only.
+
+**Implication:**
+- `detect_build_result()` replaced by `diff_allowlist_gate()`
+- Build runs in throwaway workspace, not project root
+- `--allowedTools` controls Claude Code's capabilities (not `--print` meaning "no tools")
+- Research and build are separate phases with explicit handoff via build packets
 
 ---
