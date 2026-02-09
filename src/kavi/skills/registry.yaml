@@ -1,0 +1,4 @@
+# Kavi Skill Registry — TRUSTED skills only
+# This file is derived from the ledger. If conflicts exist, the ledger wins.
+# Entries are added by `kavi promote-skill`.
+skills: []

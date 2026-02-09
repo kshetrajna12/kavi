@@ -1,0 +1,13 @@
+forbidden_imports:
+  - subprocess
+  - os.system
+  - pty
+  - paramiko
+
+allowed_network: false
+
+allowed_write_paths:
+  - "./vault_out/"
+  - "./artifacts_out/"
+
+forbid_dynamic_exec: true
