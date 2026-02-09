@@ -2,10 +2,7 @@
 
 from pathlib import Path
 
-import pytest
-
 from kavi.forge.invariants import (
-    InvariantResult,
     _check_extended_safety,
     _check_structural,
     check_invariants,

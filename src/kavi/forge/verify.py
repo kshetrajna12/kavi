@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from kavi.artifacts.writer import write_verification_report
+from kavi.forge.invariants import check_invariants
 from kavi.forge.paths import skill_file_path
 from kavi.ledger.models import (
     Artifact,
@@ -37,6 +38,10 @@ class ToolRunner(Protocol):
     def run_mypy(self, skill_file: Path, cwd: Path) -> CheckResult: ...
     def run_pytest(self, cwd: Path) -> CheckResult: ...
     def run_policy_scan(self, skill_file: Path, policy: Policy) -> CheckResult: ...
+    def run_invariant_check(
+        self, skill_file: Path, *, expected_side_effect: str,
+        proposal_name: str, project_root: Path,
+    ) -> CheckResult: ...
 
 
 # --- Default runner (subprocess) ---
@@ -73,6 +78,21 @@ class SubprocessRunner:
         scan_result = ScanResult(violations=violations, files_scanned=1)
         detail = format_report(scan_result) if not scan_result.ok else ""
         return CheckResult(ok=scan_result.ok, detail=detail)
+
+    def run_invariant_check(
+        self, skill_file: Path, *, expected_side_effect: str,
+        proposal_name: str, project_root: Path,
+    ) -> CheckResult:
+        result = check_invariants(
+            skill_file,
+            expected_side_effect=expected_side_effect,
+            proposal_name=proposal_name,
+            project_root=project_root,
+        )
+        detail = ""
+        if not result.ok:
+            detail = "\n".join(f"- [{v.check}] {v.message}" for v in result.violations)
+        return CheckResult(ok=result.ok, detail=detail)
 
 
 _default_runner = SubprocessRunner()
@@ -117,13 +137,20 @@ def verify_skill(
     mypy_result = runner.run_mypy(skill_file, project_root)
     pytest_result = runner.run_pytest(project_root)
     policy_result = runner.run_policy_scan(skill_file, policy)
+    invariant_result = runner.run_invariant_check(
+        skill_file,
+        expected_side_effect=proposal.side_effect_class.value,
+        proposal_name=proposal.name,
+        project_root=project_root,
+    )
 
     ruff_ok = ruff_result.ok
     mypy_ok = mypy_result.ok
     pytest_ok = pytest_result.ok
     policy_ok = policy_result.ok
+    invariant_ok = invariant_result.ok
 
-    all_ok = ruff_ok and mypy_ok and pytest_ok and policy_ok
+    all_ok = ruff_ok and mypy_ok and pytest_ok and policy_ok and invariant_ok
     status = VerificationStatus.PASSED if all_ok else VerificationStatus.FAILED
 
     # Build report
@@ -135,12 +162,17 @@ def verify_skill(
         f"- mypy: {'PASS' if mypy_ok else 'FAIL'}",
         f"- pytest: {'PASS' if pytest_ok else 'FAIL'}",
         f"- policy: {'PASS' if policy_ok else 'FAIL'}",
+        f"- invariants: {'PASS' if invariant_ok else 'FAIL'}",
         f"\n## Overall: {'PASSED' if all_ok else 'FAILED'}\n",
     ]
 
     if not policy_ok and policy_result.detail:
         report_lines.append("\n## Policy Violations\n")
         report_lines.append(policy_result.detail)
+
+    if not invariant_ok and invariant_result.detail:
+        report_lines.append("\n## Invariant Violations\n")
+        report_lines.append(invariant_result.detail)
 
     report_content = "\n".join(report_lines)
 
@@ -157,6 +189,7 @@ def verify_skill(
         mypy_ok=mypy_ok,
         pytest_ok=pytest_ok,
         policy_ok=policy_ok,
+        invariant_ok=invariant_ok,
         report_path=artifact.path,
     )
     insert_verification(conn, verification)

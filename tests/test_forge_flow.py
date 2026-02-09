@@ -37,11 +37,13 @@ class StubRunner:
         mypy_ok: bool = True,
         pytest_ok: bool = True,
         policy_scan_real: bool = True,
+        invariant_check_real: bool = True,
     ) -> None:
         self._ruff_ok = ruff_ok
         self._mypy_ok = mypy_ok
         self._pytest_ok = pytest_ok
         self._policy_scan_real = policy_scan_real
+        self._invariant_check_real = invariant_check_real
 
     def run_ruff(self, skill_file: Path, cwd: Path) -> CheckResult:
         return CheckResult(ok=self._ruff_ok)
@@ -57,6 +59,21 @@ class StubRunner:
             violations = scan_file(skill_file, policy)
             scan_result = ScanResult(violations=violations, files_scanned=1)
             return CheckResult(ok=scan_result.ok)
+        return CheckResult(ok=True)
+
+    def run_invariant_check(
+        self, skill_file: Path, *, expected_side_effect: str,
+        proposal_name: str, project_root: Path,
+    ) -> CheckResult:
+        if self._invariant_check_real:
+            from kavi.forge.invariants import check_invariants
+            result = check_invariants(
+                skill_file,
+                expected_side_effect=expected_side_effect,
+                proposal_name=proposal_name,
+                project_root=project_root,
+            )
+            return CheckResult(ok=result.ok)
         return CheckResult(ok=True)
 
 

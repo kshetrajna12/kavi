@@ -146,10 +146,11 @@ def verify_skill_cmd(
 
     color = "green" if verification.status.value == "PASSED" else "red"
     rprint(f"[{color}]Verification: {verification.status.value}[/{color}]")
-    rprint(f"  ruff:   {'PASS' if verification.ruff_ok else 'FAIL'}")
-    rprint(f"  mypy:   {'PASS' if verification.mypy_ok else 'FAIL'}")
-    rprint(f"  pytest: {'PASS' if verification.pytest_ok else 'FAIL'}")
-    rprint(f"  policy: {'PASS' if verification.policy_ok else 'FAIL'}")
+    rprint(f"  ruff:       {'PASS' if verification.ruff_ok else 'FAIL'}")
+    rprint(f"  mypy:       {'PASS' if verification.mypy_ok else 'FAIL'}")
+    rprint(f"  pytest:     {'PASS' if verification.pytest_ok else 'FAIL'}")
+    rprint(f"  policy:     {'PASS' if verification.policy_ok else 'FAIL'}")
+    rprint(f"  invariants: {'PASS' if verification.invariant_ok else 'FAIL'}")
     rprint(f"  Report: {artifact.path}")
 
 
