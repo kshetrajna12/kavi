@@ -1,4 +1,10 @@
-# Kavi Skill Registry — TRUSTED skills only
-# This file is derived from the ledger. If conflicts exist, the ledger wins.
-# Entries are added by `kavi promote-skill`.
-skills: []
+skills:
+- name: write_note
+  module_path: kavi.skills.write_note.WriteNoteSkill
+  description: Write a markdown note to the vault
+  input_model: kavi.skills.write_note.WriteNoteInput
+  output_model: kavi.skills.write_note.WriteNoteOutput
+  side_effect_class: FILE_WRITE
+  required_secrets: []
+  version: 1.0.0
+  hash: 357f8dbc0ec96fa152b709b0d39522c9bee724c802a0d9060f936038ca5d236c

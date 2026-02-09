@@ -23,7 +23,7 @@ from kavi.ledger.models import (
     get_proposal,
 )
 from kavi.policies.scanner import Policy, ScanResult, scan_file
-from kavi.skills.loader import list_skills
+from kavi.skills.loader import TrustError, list_skills, load_skill
 
 # --- Stub runner for fast tests ---
 
@@ -361,6 +361,90 @@ class TestFullForgeFlow:
                 db, proposal_id=proposal.id,
                 project_root=tmp_path, registry_path=registry_path,
             )
+
+    def test_full_pipeline_propose_through_run(
+        self, db, artifacts_dir, policy, registry_path, tmp_path,
+        monkeypatch,
+    ):
+        """End-to-end: propose → build(stub) → verify → promote → load → run.
+
+        Uses the real installed write_note.py content (not the test stub)
+        so that promote's hash matches what _verify_trust reads at import time.
+        """
+        import kavi.skills.write_note as wn_mod
+
+        # Place the real installed write_note.py at the convention path in tmp_path
+        real_content = Path(wn_mod.__file__).read_text()
+        skills_dir = tmp_path / "src" / "kavi" / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "write_note.py").write_text(real_content)
+
+        # propose
+        proposal, _ = propose_skill(
+            db, name="write_note", description="Write a note",
+            io_schema_json=IO_SCHEMA,
+            side_effect_class=SideEffectClass.FILE_WRITE,
+            output_dir=artifacts_dir,
+        )
+        # build (stub — skip Claude, mark succeeded)
+        build, _ = build_skill(
+            db, proposal_id=proposal.id, output_dir=artifacts_dir,
+        )
+        mark_build_succeeded(db, build.id)
+
+        # verify
+        verification, _ = verify_skill(
+            db, proposal_id=proposal.id,
+            policy=policy, output_dir=artifacts_dir,
+            project_root=tmp_path, runner=StubRunner(),
+        )
+        assert verification.status == VerificationStatus.PASSED
+
+        # promote — hashes the file in tmp_path (same content as installed)
+        promote_skill(
+            db, proposal_id=proposal.id,
+            project_root=tmp_path, registry_path=registry_path,
+        )
+
+        # load + trust check + run
+        skill = load_skill(registry_path, "write_note")
+        monkeypatch.chdir(tmp_path)
+        result = skill.validate_and_run({
+            "path": "test.md", "title": "Test", "body": "Hello",
+        })
+        assert "written_path" in result
+        assert "sha256" in result
+        assert (tmp_path / "vault_out" / "test.md").exists()
+
+    def test_trust_enforcement_blocks_tampered_skill(
+        self, db, artifacts_dir, skill_file, policy, registry_path, tmp_path,
+    ):
+        """After promote, tampering the skill file blocks load_skill."""
+        proposal, _ = propose_skill(
+            db, name="write_note", description="Write a note",
+            io_schema_json=IO_SCHEMA,
+            side_effect_class=SideEffectClass.FILE_WRITE,
+            output_dir=artifacts_dir,
+        )
+        build, _ = build_skill(
+            db, proposal_id=proposal.id, output_dir=artifacts_dir,
+        )
+        mark_build_succeeded(db, build.id)
+        verify_skill(
+            db, proposal_id=proposal.id,
+            policy=policy, output_dir=artifacts_dir,
+            project_root=tmp_path, runner=StubRunner(),
+        )
+        promote_skill(
+            db, proposal_id=proposal.id,
+            project_root=tmp_path, registry_path=registry_path,
+        )
+
+        # Tamper with the skill file after promotion
+        skill_file.write_text(WRITE_NOTE_SKILL_CODE + "\n# tampered\n")
+
+        with pytest.raises(TrustError, match="failed trust check"):
+            load_skill(registry_path, "write_note")
 
 
 @pytest.mark.slow
