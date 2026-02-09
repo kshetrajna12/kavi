@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,10 @@ from typing import Any
 import yaml
 
 from kavi.skills.base import BaseSkill
+
+
+class TrustError(Exception):
+    """Raised when a skill file hash does not match the registry."""
 
 
 def load_registry(registry_path: Path) -> list[dict[str, Any]]:
@@ -37,11 +42,41 @@ def import_skill(module_path: str) -> type[BaseSkill]:
     return cls
 
 
+def _verify_trust(module_path: str, expected_hash: str) -> None:
+    """Re-hash the skill source file and compare against the registry hash.
+
+    Raises TrustError if the hash does not match or the source file
+    cannot be located.
+    """
+    parts = module_path.rsplit(".", 1)
+    module_name = parts[0]
+    mod = importlib.import_module(module_name)
+    source_file = getattr(mod, "__file__", None)
+    if source_file is None:
+        raise TrustError(
+            f"Cannot locate source file for module '{module_name}'"
+        )
+    actual_hash = hashlib.sha256(Path(source_file).read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise TrustError(
+            f"Skill '{module_path}' failed trust check: "
+            f"expected hash {expected_hash[:12]}…, "
+            f"got {actual_hash[:12]}…"
+        )
+
+
 def load_skill(registry_path: Path, skill_name: str) -> BaseSkill:
-    """Load and instantiate a skill by name from the registry."""
+    """Load and instantiate a skill by name from the registry.
+
+    Verifies the skill file hash against the registry before execution.
+    Raises TrustError if the hash does not match.
+    """
     entries = load_registry(registry_path)
     for entry in entries:
         if entry["name"] == skill_name:
+            expected_hash = entry.get("hash")
+            if expected_hash:
+                _verify_trust(entry["module_path"], expected_hash)
             cls = import_skill(entry["module_path"])
             return cls()
     raise KeyError(f"Skill '{skill_name}' not found in registry")

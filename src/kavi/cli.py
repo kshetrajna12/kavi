@@ -267,6 +267,15 @@ def run_skill_cmd(
         typer.echo(f"Invalid JSON input: {e}")
         raise typer.Exit(1)
 
-    skill = load_skill(REGISTRY_PATH, skill_name)
+    from kavi.skills.loader import TrustError
+
+    try:
+        skill = load_skill(REGISTRY_PATH, skill_name)
+    except TrustError as e:
+        rprint(f"[red]Trust verification failed:[/red] {e}")
+        rprint("The skill file has been modified since it was promoted.")
+        rprint("Re-verify and re-promote the skill to update the trusted hash.")
+        raise typer.Exit(1)
+
     result = skill.validate_and_run(raw_input)
     rprint(json.dumps(result, indent=2))

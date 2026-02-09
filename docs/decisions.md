@@ -166,3 +166,21 @@ The `build-skill` flow is:
 - Research and build are separate phases with explicit handoff via build packets
 
 ---
+
+## D010: Runtime trust enforcement via hash verification (2026-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** After a skill is promoted to TRUSTED, nothing prevents the source file from being modified between promotion and execution. An attacker (or accidental edit) could change skill behavior without re-verification.
+
+**Decision:** Re-hash the skill source file at load time (`load_skill`). Compare against the SHA256 stored in the registry at promote time. Refuse to execute on mismatch, raising `TrustError`.
+
+**Rationale:** The promote step already computes and stores the hash. Verifying it at runtime closes the trust chain: propose → build → verify → promote (hash stored) → run (hash verified). The cost is one hash per `load_skill` call — negligible.
+
+**Implication:**
+- `_verify_trust()` added to `kavi.skills.loader`
+- `TrustError` exception surfaced in CLI with remediation guidance
+- If a skill file is edited post-promotion, it must be re-verified and re-promoted
+- Registry entries without a `hash` field skip verification (backwards compat)
+
+---

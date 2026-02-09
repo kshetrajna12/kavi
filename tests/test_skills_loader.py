@@ -1,11 +1,18 @@
 """Tests for skills loader."""
 
+import hashlib
 from pathlib import Path
 
 import pytest
 
 from kavi.skills.base import BaseSkill, SkillInput, SkillOutput
-from kavi.skills.loader import list_skills, load_registry, save_registry
+from kavi.skills.loader import (
+    TrustError,
+    list_skills,
+    load_registry,
+    load_skill,
+    save_registry,
+)
 
 
 @pytest.fixture()
@@ -87,3 +94,63 @@ class TestBaseSkill:
         skill = MockSkill()
         assert skill.name == "test_skill"
         assert skill.side_effect_class == "READ_ONLY"
+
+
+class TestTrustEnforcement:
+    """Tests for runtime trust verification (D010)."""
+
+    def _this_file_hash(self) -> str:
+        """Compute the hash of this test file (where MockSkill lives)."""
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+    def test_load_skill_with_valid_hash(self, tmp_path: Path) -> None:
+        """Skill loads when file hash matches registry."""
+        reg = tmp_path / "registry.yaml"
+        save_registry(reg, [{
+            "name": "test_skill",
+            "module_path": "tests.test_skills_loader.MockSkill",
+            "description": "A test skill",
+            "side_effect_class": "READ_ONLY",
+            "required_secrets": [],
+            "version": "1.0.0",
+            "hash": self._this_file_hash(),
+        }])
+        skill = load_skill(reg, "test_skill")
+        assert skill.name == "test_skill"
+
+    def test_load_skill_rejects_tampered_hash(self, tmp_path: Path) -> None:
+        """Skill refuses to load when file hash doesn't match registry."""
+        reg = tmp_path / "registry.yaml"
+        save_registry(reg, [{
+            "name": "test_skill",
+            "module_path": "tests.test_skills_loader.MockSkill",
+            "description": "A test skill",
+            "side_effect_class": "READ_ONLY",
+            "required_secrets": [],
+            "version": "1.0.0",
+            "hash": "deadbeef" * 8,  # wrong hash
+        }])
+        with pytest.raises(TrustError, match="failed trust check"):
+            load_skill(reg, "test_skill")
+
+    def test_load_skill_skips_check_when_no_hash(self, tmp_path: Path) -> None:
+        """Skill loads without trust check if registry has no hash."""
+        reg = tmp_path / "registry.yaml"
+        save_registry(reg, [{
+            "name": "test_skill",
+            "module_path": "tests.test_skills_loader.MockSkill",
+            "description": "A test skill",
+            "side_effect_class": "READ_ONLY",
+            "required_secrets": [],
+            "version": "1.0.0",
+        }])
+        # Should load fine — no hash means skip verification
+        skill = load_skill(reg, "test_skill")
+        assert skill.name == "test_skill"
+
+    def test_load_skill_not_found(self, tmp_path: Path) -> None:
+        """KeyError when skill name not in registry."""
+        reg = tmp_path / "registry.yaml"
+        save_registry(reg, [])
+        with pytest.raises(KeyError, match="not_real"):
+            load_skill(reg, "not_real")
