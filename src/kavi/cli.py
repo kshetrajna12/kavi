@@ -154,6 +154,45 @@ def verify_skill_cmd(
     rprint(f"  Report: {artifact.path}")
 
 
+@app.command("check-invariants")
+def check_invariants_cmd(
+    proposal_id: str = typer.Argument(help="Proposal ID to check"),
+) -> None:
+    """Run invariant checks (structural, scope, safety) on a skill."""
+    from kavi.config import PROJECT_ROOT
+    from kavi.forge.invariants import check_invariants
+    from kavi.forge.paths import skill_file_path
+    from kavi.ledger.models import get_proposal
+
+    conn = _get_conn()
+    proposal = get_proposal(conn, proposal_id)
+    conn.close()
+    if proposal is None:
+        typer.echo(f"Proposal '{proposal_id}' not found")
+        raise typer.Exit(1)
+
+    skill_file = skill_file_path(proposal.name, PROJECT_ROOT)
+    result = check_invariants(
+        skill_file,
+        expected_side_effect=proposal.side_effect_class.value,
+        proposal_name=proposal.name,
+        project_root=PROJECT_ROOT,
+    )
+
+    color = "green" if result.ok else "red"
+    rprint(f"[{color}]Invariants: {'PASS' if result.ok else 'FAIL'}[/{color}]")
+    rprint(f"  structural: {'PASS' if result.structural_ok else 'FAIL'}")
+    rprint(f"  scope:      {'PASS' if result.scope_ok else 'FAIL'}")
+    rprint(f"  safety:     {'PASS' if result.safety_ok else 'FAIL'}")
+    if result.violations:
+        rprint("\n[red]Violations:[/red]")
+        for v in result.violations:
+            line = f" (line {v.line})" if v.line else ""
+            rprint(f"  [{v.check}] {v.message}{line}")
+    if not result.ok:
+        raise typer.Exit(1)
+
+
 @app.command("promote-skill")
 def promote_skill_cmd(
     proposal_id: str = typer.Argument(help="Proposal ID to promote"),

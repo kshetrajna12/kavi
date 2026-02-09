@@ -97,3 +97,22 @@ Remove `--skill-file` from `verify-skill` CLI and `--skill-file`/`--module-path`
 **Implication:** All skills must follow the naming convention. Custom paths are no longer supported.
 
 ---
+
+## D007: Invariant checker as separate governance gate (2025-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** The policy scanner checks safety (forbidden imports, eval/exec) but not contract conformance — it can't verify that a skill class extends BaseSkill with the correct attributes, that the side_effect_class matches the proposal, or that only expected files were modified.
+
+**Decision:** Add an invariant checker (`forge/invariants.py`) with three sub-checks:
+1. **Structural conformance** (AST): class extends BaseSkill, required attrs present, side_effect_class matches proposal
+2. **Scope containment** (git diff): only skill + test files modified, protected paths unchanged
+3. **Extended safety** (AST): no `__import__()`, no `importlib.import_module()`
+
+Integrated as check #5 in `verify_skill()`. Also available standalone via `kavi check-invariants`.
+
+**Rationale:** Structural governance complements the policy scanner. Together they ensure both "is the code safe?" and "does the code conform to the skill contract?" Keeping them separate preserves single-responsibility.
+
+**Implication:** `all_ok` in verification now requires 5 checks to pass. Schema migrated to v2 with `invariant_ok` column.
+
+---
