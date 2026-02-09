@@ -181,6 +181,39 @@ The `build-skill` flow is:
 - `_verify_trust()` added to `kavi.skills.loader`
 - `TrustError` exception surfaced in CLI with remediation guidance
 - If a skill file is edited post-promotion, it must be re-verified and re-promoted
-- Registry entries without a `hash` field skip verification (backwards compat)
+- Registry entries without a `hash` field skip verification (backwards compat); now emits warning
+
+---
+
+## D011: Iteration/retry with two-layer research (2026-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** Build attempts can fail (gate violations, timeouts, lint errors, etc.). Without retry, every failure requires manual intervention. D009 established sandboxed builds with diff allowlists, but had no recovery path for failures.
+
+**Decision:** Iteration is ACROSS attempts, not within. Each attempt is epistemically closed (frozen BUILD_PACKET). Research happens between attempts.
+
+**Two-layer research:**
+1. **Layer 1 (canonical):** Deterministic failure classifier extracts `failure_kind` + `failure_facts` from build/verify logs. Drives ledger state. Fully testable.
+2. **Layer 2 (advisory):** LLM proposes BUILD_PACKET diff based on classification. Engine validates and gates the diff (schema + policy + no permission widening). Human required on escalation.
+
+**Escalation triggers:** repeated same failure (≥3), permission widening, security-class failures, large packet diffs (>50%), ambiguity.
+
+**State machine:** PROPOSED + BUILT are buildable. VERIFIED is stable and never overloaded.
+```
+propose → build_1 (fail, stays PROPOSED) → research → build_2 → ... → build_N (success → BUILT)
+                                                                         → verify → promote → run
+```
+
+**Schema:** `builds.attempt_number` + `builds.parent_build_id`. `ArtifactKind.RESEARCH_NOTE` for research output.
+
+**Rationale:** Epistemically closed attempts prevent unbounded iteration within a single build. The two-layer approach separates deterministic (testable) classification from advisory (LLM) suggestions. Escalation triggers ensure human review for high-risk retries.
+
+**Implication:**
+- `build_skill()` accepts PROPOSED and BUILT proposals (BUILT resets to PROPOSED on retry)
+- `research_skill()` produces RESEARCH_NOTE artifacts from failed builds
+- `advise_retry()` calls Sparkstation LLM for advisory packet diffs
+- Build packets keyed by `build_id` (unique per attempt, not per proposal)
+- CLI: `kavi research-skill <build_id> [--hint] [--advise/--no-advise]`
 
 ---

@@ -17,6 +17,7 @@ from kavi.forge.propose import propose_skill
 from kavi.forge.verify import CheckResult, SubprocessRunner, verify_skill
 from kavi.ledger.db import init_db
 from kavi.ledger.models import (
+    BuildStatus,
     ProposalStatus,
     SideEffectClass,
     VerificationStatus,
@@ -464,6 +465,129 @@ class TestFullForgeFlow:
 
         with pytest.raises(TrustError, match="failed trust check"):
             load_skill(registry_path, "write_note")
+
+
+class TestRetryFlow:
+    """Test the iteration/retry flow: propose → build(fail) → research → build(succeed).
+
+    Exercises D011 attempt lineage and failure classification.
+    """
+
+    def test_failed_build_retries_to_success(
+        self, db, artifacts_dir, policy, registry_path, tmp_path, monkeypatch,
+    ):
+        """propose → build(fail) → research → build(succeed) → verify → promote → run."""
+        import kavi.skills.write_note as wn_mod
+        from kavi.forge.build import mark_build_failed
+        from kavi.forge.research import FailureKind, research_skill
+        from kavi.ledger.models import get_build
+
+        # Place real write_note.py for later promote hash matching
+        real_content = Path(wn_mod.__file__).read_text()
+        skills_dir = tmp_path / "src" / "kavi" / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "write_note.py").write_text(real_content)
+
+        # 1. Propose
+        proposal, _ = propose_skill(
+            db, name="write_note", description="Write a note",
+            io_schema_json=IO_SCHEMA,
+            side_effect_class=SideEffectClass.FILE_WRITE,
+            output_dir=artifacts_dir,
+        )
+
+        # 2. First build — mark failed (simulating gate violation)
+        build1, packet1 = build_skill(
+            db, proposal_id=proposal.id, output_dir=artifacts_dir,
+        )
+        assert build1.attempt_number == 1
+        assert build1.parent_build_id is None
+        mark_build_failed(
+            db, build1.id,
+            summary="Diff gate failed: Violations: ['pyproject.toml']",
+        )
+
+        # 3. Research — classify failure, produce RESEARCH_NOTE
+        analysis, research_art = research_skill(
+            db, build_id=build1.id, output_dir=artifacts_dir,
+            user_hint="Claude modified pyproject.toml by mistake",
+        )
+        assert analysis.kind == FailureKind.GATE_VIOLATION
+        assert Path(research_art.path).exists()
+        research_content = Path(research_art.path).read_text()
+        assert "GATE_VIOLATION" in research_content
+
+        # 4. Second build — retry (PROPOSED status persists after first failure)
+        build2, packet2 = build_skill(
+            db, proposal_id=proposal.id, output_dir=artifacts_dir,
+        )
+        assert build2.attempt_number == 2
+        assert build2.parent_build_id == build1.id
+        # Retry packet should include research context
+        p2_content = Path(packet2.path).read_text()
+        assert "Research Findings" in p2_content or "Previous Attempt" in p2_content
+
+        # Mark second build succeeded
+        mark_build_succeeded(db, build2.id)
+
+        # Verify attempt lineage in DB
+        b2 = get_build(db, build2.id)
+        assert b2 is not None
+        assert b2.attempt_number == 2
+        assert b2.parent_build_id == build1.id
+
+        # 5. Verify + promote + load + run
+        verification, _ = verify_skill(
+            db, proposal_id=proposal.id,
+            policy=policy, output_dir=artifacts_dir,
+            project_root=tmp_path, runner=StubRunner(),
+        )
+        assert verification.status == VerificationStatus.PASSED
+
+        promote_skill(
+            db, proposal_id=proposal.id,
+            project_root=tmp_path, registry_path=registry_path,
+        )
+
+        skill = load_skill(registry_path, "write_note")
+        monkeypatch.chdir(tmp_path)
+        result = skill.validate_and_run({
+            "path": "test.md", "title": "Test", "body": "Hello",
+        })
+        assert "written_path" in result
+        assert (tmp_path / "vault_out" / "test.md").exists()
+
+    def test_classify_failure_verification_lint(self, db, artifacts_dir, tmp_path):
+        """Verify lint failures are classified correctly."""
+        from kavi.forge.research import FailureKind, classify_failure
+        from kavi.ledger.models import Build, Verification
+
+        build = Build(
+            proposal_id="fake", branch_name="b",
+            status=BuildStatus.SUCCEEDED, attempt_number=1,
+        )
+        verification = Verification(
+            proposal_id="fake",
+            status=VerificationStatus.FAILED,
+            ruff_ok=False, mypy_ok=True, pytest_ok=True,
+            policy_ok=True, invariant_ok=True,
+        )
+        analysis = classify_failure(build, "", verification)
+        assert analysis.kind == FailureKind.VERIFY_LINT
+        assert "ruff" in analysis.facts[0]
+
+    def test_classify_failure_timeout(self, db, artifacts_dir):
+        """Verify timeout failures are classified correctly."""
+        from kavi.forge.research import FailureKind, classify_failure
+        from kavi.ledger.models import Build
+
+        build = Build(
+            proposal_id="fake", branch_name="b",
+            status=BuildStatus.FAILED, attempt_number=1,
+            summary="Timeout after 600s",
+        )
+        analysis = classify_failure(build, "")
+        assert analysis.kind == FailureKind.TIMEOUT
 
 
 @pytest.mark.slow
