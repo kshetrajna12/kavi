@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS skill_proposals (
@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS builds (
     status TEXT NOT NULL DEFAULT 'STARTED' CHECK (
         status IN ('STARTED', 'FAILED', 'SUCCEEDED')
     ),
-    summary TEXT
+    summary TEXT,
+    attempt_number INTEGER NOT NULL DEFAULT 1,
+    parent_build_id TEXT REFERENCES builds(id)
 );
 
 CREATE TABLE IF NOT EXISTS verifications (
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (
         kind IN ('SKILL_SPEC', 'PATCH_SUMMARY', 'VERIFICATION_REPORT',
-                 'NOTE', 'BUILD_PACKET', 'BUILD_LOG')
+                 'NOTE', 'BUILD_PACKET', 'BUILD_LOG', 'RESEARCH_NOTE')
     ),
     path TEXT NOT NULL,
     sha256 TEXT NOT NULL,
@@ -94,6 +96,26 @@ MIGRATIONS: dict[int, list[str]] = {
             kind TEXT NOT NULL CHECK (
                 kind IN ('SKILL_SPEC', 'PATCH_SUMMARY', 'VERIFICATION_REPORT',
                          'NOTE', 'BUILD_PACKET', 'BUILD_LOG')
+            ),
+            path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+            related_id TEXT
+        )""",
+        "INSERT INTO artifacts_new SELECT * FROM artifacts",
+        "DROP TABLE artifacts",
+        "ALTER TABLE artifacts_new RENAME TO artifacts",
+    ],
+    4: [
+        # Add attempt lineage to builds (D011)
+        "ALTER TABLE builds ADD COLUMN attempt_number INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE builds ADD COLUMN parent_build_id TEXT REFERENCES builds(id)",
+        # Widen artifacts.kind CHECK to include RESEARCH_NOTE
+        """CREATE TABLE artifacts_new (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK (
+                kind IN ('SKILL_SPEC', 'PATCH_SUMMARY', 'VERIFICATION_REPORT',
+                         'NOTE', 'BUILD_PACKET', 'BUILD_LOG', 'RESEARCH_NOTE')
             ),
             path TEXT NOT NULL,
             sha256 TEXT NOT NULL,

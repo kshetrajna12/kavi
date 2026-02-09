@@ -46,6 +46,7 @@ class ArtifactKind(StrEnum):
     NOTE = "NOTE"
     BUILD_PACKET = "BUILD_PACKET"
     BUILD_LOG = "BUILD_LOG"
+    RESEARCH_NOTE = "RESEARCH_NOTE"
 
 
 # --- Pydantic Models ---
@@ -77,6 +78,8 @@ class Build(BaseModel):
     finished_at: str | None = None
     status: BuildStatus = BuildStatus.STARTED
     summary: str | None = None
+    attempt_number: int = 1
+    parent_build_id: str | None = None
 
 
 class Verification(BaseModel):
@@ -167,12 +170,13 @@ def list_proposals(
 def insert_build(conn: sqlite3.Connection, build: Build) -> Build:
     conn.execute(
         """INSERT INTO builds
-           (id, proposal_id, branch_name, started_at, finished_at, status, summary)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           (id, proposal_id, branch_name, started_at, finished_at, status, summary,
+            attempt_number, parent_build_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             build.id, build.proposal_id, build.branch_name,
             build.started_at, build.finished_at, build.status.value,
-            build.summary,
+            build.summary, build.attempt_number, build.parent_build_id,
         ),
     )
     conn.commit()
