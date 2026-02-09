@@ -86,6 +86,7 @@ class Verification(BaseModel):
     mypy_ok: bool = False
     pytest_ok: bool = False
     policy_ok: bool = False
+    invariant_ok: bool = False
     report_path: str | None = None
     created_at: str = Field(default_factory=_now)
 
@@ -220,12 +221,12 @@ def insert_verification(conn: sqlite3.Connection, v: Verification) -> Verificati
     conn.execute(
         """INSERT INTO verifications
            (id, proposal_id, status, ruff_ok, mypy_ok, pytest_ok, policy_ok,
-            report_path, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            invariant_ok, report_path, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             v.id, v.proposal_id, v.status.value,
             int(v.ruff_ok), int(v.mypy_ok), int(v.pytest_ok), int(v.policy_ok),
-            v.report_path, v.created_at,
+            int(v.invariant_ok), v.report_path, v.created_at,
         ),
     )
     conn.commit()

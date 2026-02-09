@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS skill_proposals (
@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS verifications (
     mypy_ok INTEGER NOT NULL DEFAULT 0,
     pytest_ok INTEGER NOT NULL DEFAULT 0,
     policy_ok INTEGER NOT NULL DEFAULT 0,
+    invariant_ok INTEGER NOT NULL DEFAULT 0,
     report_path TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
@@ -80,6 +81,29 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+MIGRATIONS: dict[int, list[str]] = {
+    2: [
+        "ALTER TABLE verifications ADD COLUMN invariant_ok INTEGER NOT NULL DEFAULT 0",
+    ],
+}
+
+
+def _get_schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    return int(row["version"]) if row else 0
+
+
+def _run_migrations(conn: sqlite3.Connection, current: int) -> None:
+    for version in sorted(MIGRATIONS):
+        if version > current:
+            for sql in MIGRATIONS[version]:
+                conn.execute(sql)
+            conn.execute(
+                "UPDATE schema_version SET version = ?", (version,),
+            )
+    conn.commit()
+
+
 def init_db(db_path: Path) -> sqlite3.Connection:
     """Initialize database with schema. Idempotent."""
     conn = get_connection(db_path)
@@ -89,6 +113,9 @@ def init_db(db_path: Path) -> sqlite3.Connection:
         "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
     )
     if cursor.fetchone() is not None:
+        current = _get_schema_version(conn)
+        if current < SCHEMA_VERSION:
+            _run_migrations(conn, current)
         return conn
 
     conn.executescript(SCHEMA_SQL)
