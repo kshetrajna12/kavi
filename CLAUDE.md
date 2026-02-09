@@ -88,16 +88,23 @@ This ensures continuity across sessions without losing context.
 - Prefer small commits that preserve bisectability:
   - one commit per coherent change (schema, extractor, resolver, view, etc.)
 
+## Design Decisions
+
+**`docs/decisions.md`** is the append-only record of architectural and design decisions.
+
+- When making a non-trivial decision (architecture, sources of truth, enforcement strategy, technology choice), record it in `docs/decisions.md` using the format: D###, context, decision, rationale, implications.
+- When a decision is superseded, mark the old entry and reference the new one — never delete.
+- Check `docs/decisions.md` at session start to avoid re-litigating settled questions.
+
 ## Documentation Discipline
 **At the end of every session**, check if documentation needs updating. Key docs to review:
 
 | If you changed... | Update... |
 |-------------------|-----------|
-| API endpoints | `docs/api_v0.md` (spec + endpoint summary table), `README.md` (usage examples) |
-| Predicates | `docs/predicate_registry_v0.md` |
-| Database schema | `docs/database_schema.md` |
-| Architecture/data flow | `docs/architecture.md` |
-| View generators | `docs/materialized_views_design.md` |
+| CLI commands | `README.md` (usage examples) |
+| Database schema | `docs/decisions.md` (if schema choice changed) |
+| Architecture/data flow | `docs/decisions.md` |
+| Design decisions | `docs/decisions.md` |
 
 Documentation updates are part of completing work, not a separate task.
 

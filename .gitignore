@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Kavi
+vault_out/
+artifacts_out/
+*.db
+*.db-journal
