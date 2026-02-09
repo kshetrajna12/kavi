@@ -23,6 +23,10 @@ packages = ["src/kavi"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: marks tests that run real subprocesses (deselected by default, run with -m slow)",
+]
 
 [tool.ruff]
 src = ["src"]

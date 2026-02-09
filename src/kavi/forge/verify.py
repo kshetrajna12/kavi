@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from kavi.artifacts.writer import write_verification_report
 from kavi.ledger.models import (
@@ -18,16 +20,64 @@ from kavi.ledger.models import (
 )
 from kavi.policies.scanner import Policy, ScanResult, format_report, scan_file
 
+# --- ToolRunner interface ---
 
-def _run_tool(cmd: list[str], cwd: Path | None = None) -> bool:
-    """Run a CLI tool, return True if it exits 0."""
-    try:
-        result = subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=120,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+
+@dataclass
+class CheckResult:
+    ok: bool
+    detail: str = ""
+
+
+class ToolRunner(Protocol):
+    """Interface for running verification tools. Injectable for testing."""
+
+    def run_ruff(self, skill_file: Path, cwd: Path) -> CheckResult: ...
+    def run_mypy(self, skill_file: Path, cwd: Path) -> CheckResult: ...
+    def run_pytest(self, cwd: Path) -> CheckResult: ...
+    def run_policy_scan(self, skill_file: Path, policy: Policy) -> CheckResult: ...
+
+
+# --- Default runner (subprocess) ---
+
+
+class SubprocessRunner:
+    """Runs real tools via subprocess. Used in production CLI."""
+
+    def _run(self, cmd: list[str], cwd: Path | None = None) -> CheckResult:
+        try:
+            result = subprocess.run(  # noqa: S603
+                cmd, capture_output=True, text=True, cwd=cwd, timeout=120,
+            )
+            return CheckResult(
+                ok=result.returncode == 0,
+                detail=result.stdout + result.stderr,
+            )
+        except subprocess.TimeoutExpired:
+            return CheckResult(ok=False, detail="Timeout")
+        except FileNotFoundError as e:
+            return CheckResult(ok=False, detail=str(e))
+
+    def run_ruff(self, skill_file: Path, cwd: Path) -> CheckResult:
+        return self._run(["ruff", "check", str(skill_file)], cwd=cwd)
+
+    def run_mypy(self, skill_file: Path, cwd: Path) -> CheckResult:
+        return self._run(["mypy", str(skill_file)], cwd=cwd)
+
+    def run_pytest(self, cwd: Path) -> CheckResult:
+        return self._run(["pytest", "-q", "--tb=short"], cwd=cwd)
+
+    def run_policy_scan(self, skill_file: Path, policy: Policy) -> CheckResult:
+        violations = scan_file(skill_file, policy)
+        scan_result = ScanResult(violations=violations, files_scanned=1)
+        detail = format_report(scan_result) if not scan_result.ok else ""
+        return CheckResult(ok=scan_result.ok, detail=detail)
+
+
+_default_runner = SubprocessRunner()
+
+
+# --- Core verify function ---
 
 
 def verify_skill(
@@ -38,30 +88,37 @@ def verify_skill(
     policy: Policy,
     output_dir: Path,
     project_root: Path | None = None,
+    runner: ToolRunner | None = None,
 ) -> tuple[Verification, Artifact]:
     """Run all verification checks on a skill and record results.
 
-    Checks:
+    Checks (via runner):
     1. ruff (linting)
     2. mypy (type checking)
     3. pytest (unit tests)
     4. Policy scanner (forbidden patterns)
+
+    Pass a custom ToolRunner to override tool execution (e.g. for testing).
     """
     proposal = get_proposal(conn, proposal_id)
     if proposal is None:
         raise ValueError(f"Proposal '{proposal_id}' not found")
 
+    if runner is None:
+        runner = _default_runner
+
     cwd = project_root or Path.cwd()
 
     # Run checks
-    ruff_ok = _run_tool(["ruff", "check", str(skill_file)], cwd=cwd)
-    mypy_ok = _run_tool(["mypy", str(skill_file)], cwd=cwd)
-    pytest_ok = _run_tool(["pytest", "-q", "--tb=short"], cwd=cwd)
+    ruff_result = runner.run_ruff(skill_file, cwd)
+    mypy_result = runner.run_mypy(skill_file, cwd)
+    pytest_result = runner.run_pytest(cwd)
+    policy_result = runner.run_policy_scan(skill_file, policy)
 
-    # Policy scan
-    violations = scan_file(skill_file, policy)
-    scan_result = ScanResult(violations=violations, files_scanned=1)
-    policy_ok = scan_result.ok
+    ruff_ok = ruff_result.ok
+    mypy_ok = mypy_result.ok
+    pytest_ok = pytest_result.ok
+    policy_ok = policy_result.ok
 
     all_ok = ruff_ok and mypy_ok and pytest_ok and policy_ok
     status = VerificationStatus.PASSED if all_ok else VerificationStatus.FAILED
@@ -78,9 +135,9 @@ def verify_skill(
         f"\n## Overall: {'PASSED' if all_ok else 'FAILED'}\n",
     ]
 
-    if not policy_ok:
+    if not policy_ok and policy_result.detail:
         report_lines.append("\n## Policy Violations\n")
-        report_lines.append(format_report(scan_result))
+        report_lines.append(policy_result.detail)
 
     report_content = "\n".join(report_lines)
 
