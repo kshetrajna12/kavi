@@ -27,8 +27,14 @@ from kavi.ledger.models import (
 # Build packet generation
 # ---------------------------------------------------------------------------
 
-# Patterns excluded from sandbox copies (matched by rglob)
-_SECRET_PATTERNS = [".env", ".env.*", "*.pem", "*.key", "credentials.json"]
+# Patterns excluded from sandbox copies (matched by fnmatch)
+_SECRET_PATTERNS = [".env", ".env.*", "*.pem", "*.key", "credentials.json",
+                    "*.db", "*.db-wal", "*.db-journal"]
+# Top-level directories excluded from sandbox (not needed for build)
+_EXCLUDED_DIRS = {".git", ".beads", ".venv", "__pycache__", ".mypy_cache",
+                  "artifacts_out", "vault_out", "node_modules"}
+# File extensions/patterns that can't be copied (sockets, fifos)
+_EXCLUDED_SUFFIXES = {".sock"}
 
 
 def _create_build_packet_content(
@@ -127,6 +133,16 @@ def _is_secret_file(name: str) -> bool:
     return any(fnmatch(name, pat) for pat in _SECRET_PATTERNS)
 
 
+def _is_special_file(path: Path) -> bool:
+    """Check if a path is a socket, fifo, or other non-regular, non-dir file."""
+    import stat
+    try:
+        mode = path.lstat().st_mode
+        return stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode) or stat.S_ISBLK(mode)
+    except OSError:
+        return False
+
+
 def create_sandbox(project_root: Path, sandbox_parent: Path) -> Path:
     """Create an isolated workspace for building.
 
@@ -139,12 +155,21 @@ def create_sandbox(project_root: Path, sandbox_parent: Path) -> Path:
     def _ignore(directory: str, entries: list[str]) -> set[str]:
         ignored: set[str] = set()
         for entry in entries:
-            # Always exclude .git directory
-            if entry == ".git":
+            # Exclude known directories (git, venv, caches, sockets, etc.)
+            if entry in _EXCLUDED_DIRS:
+                ignored.add(entry)
+                continue
+            # Exclude __pycache__ at any depth
+            if entry == "__pycache__":
                 ignored.add(entry)
                 continue
             # Exclude secret files
             if _is_secret_file(entry):
+                ignored.add(entry)
+                continue
+            # Exclude special files (sockets, etc.)
+            full = Path(directory) / entry
+            if full.suffix in _EXCLUDED_SUFFIXES or _is_special_file(full):
                 ignored.add(entry)
         return ignored
 
