@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
+from kavi.forge.paths import skill_file_path, skill_module_path
 from kavi.ledger.models import (
     Promotion,
     ProposalStatus,
@@ -17,9 +18,9 @@ from kavi.ledger.models import (
 from kavi.skills.loader import load_registry, save_registry
 
 
-def _compute_skill_hash(skill_file: Path) -> str:
+def _compute_skill_hash(path: Path) -> str:
     """Compute sha256 of the skill source file."""
-    content = skill_file.read_bytes()
+    content = path.read_bytes()
     return hashlib.sha256(content).hexdigest()
 
 
@@ -27,13 +28,15 @@ def promote_skill(
     conn: sqlite3.Connection,
     *,
     proposal_id: str,
-    skill_file: Path,
-    module_path: str,
+    project_root: Path,
     registry_path: Path,
     approved_by: str = "kshetrajna",
     version: str = "1.0.0",
 ) -> Promotion:
     """Promote a verified skill to TRUSTED.
+
+    Skill file and module path are derived from the proposal name
+    using convention-based paths.
 
     Requirements:
     - Proposal must have status VERIFIED
@@ -50,6 +53,10 @@ def promote_skill(
     verification = get_latest_verification(conn, proposal_id)
     if verification is None or verification.status.value != "PASSED":
         raise ValueError(f"No passing verification found for proposal '{proposal_id}'")
+
+    # Derive paths from proposal name
+    skill_file = skill_file_path(proposal.name, project_root)
+    module_path = skill_module_path(proposal.name)
 
     # Compute hash of skill file
     skill_hash = _compute_skill_hash(skill_file)

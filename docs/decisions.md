@@ -78,3 +78,22 @@ No OS-level sandboxing (chroot, seccomp) in v1.
 **Rationale:** The prototype is an archaeological artifact, not a dependency. v2 is a governed spine, not an agent system.
 
 ---
+
+## D006: Convention-based skill path derivation (2025-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** `verify-skill` and `promote-skill` required explicit `--skill-file` and `--module-path` arguments, duplicating conventions already established in the build packet.
+
+**Decision:** Derive all paths from the proposal name using `forge/paths.py`:
+- Skill file: `src/kavi/skills/{name}.py`
+- Test file: `tests/test_skill_{name}.py`
+- Module path: `kavi.skills.{name}.{CamelCase}Skill`
+
+Remove `--skill-file` from `verify-skill` CLI and `--skill-file`/`--module-path` from `promote-skill` CLI. Both now take only a proposal ID and derive paths internally.
+
+**Rationale:** Single source of naming truth eliminates drift between build packet expectations and downstream verification/promotion. Reduces CLI surface area and makes the pipeline less error-prone.
+
+**Implication:** All skills must follow the naming convention. Custom paths are no longer supported.
+
+---

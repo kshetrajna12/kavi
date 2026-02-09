@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from kavi.artifacts.writer import write_verification_report
+from kavi.forge.paths import skill_file_path
 from kavi.ledger.models import (
     Artifact,
     ProposalStatus,
@@ -84,13 +85,15 @@ def verify_skill(
     conn: sqlite3.Connection,
     *,
     proposal_id: str,
-    skill_file: Path,
     policy: Policy,
     output_dir: Path,
-    project_root: Path | None = None,
+    project_root: Path,
     runner: ToolRunner | None = None,
 ) -> tuple[Verification, Artifact]:
     """Run all verification checks on a skill and record results.
+
+    The skill file is derived from the proposal name using convention:
+    ``src/kavi/skills/{name}.py``
 
     Checks (via runner):
     1. ruff (linting)
@@ -107,12 +110,12 @@ def verify_skill(
     if runner is None:
         runner = _default_runner
 
-    cwd = project_root or Path.cwd()
+    skill_file = skill_file_path(proposal.name, project_root)
 
     # Run checks
-    ruff_result = runner.run_ruff(skill_file, cwd)
-    mypy_result = runner.run_mypy(skill_file, cwd)
-    pytest_result = runner.run_pytest(cwd)
+    ruff_result = runner.run_ruff(skill_file, project_root)
+    mypy_result = runner.run_mypy(skill_file, project_root)
+    pytest_result = runner.run_pytest(project_root)
     policy_result = runner.run_policy_scan(skill_file, policy)
 
     ruff_ok = ruff_result.ok

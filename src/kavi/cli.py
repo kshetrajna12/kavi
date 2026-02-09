@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 
 import typer
 from rich import print as rprint
@@ -130,18 +129,18 @@ def mark_build_done_cmd(
 @app.command("verify-skill")
 def verify_skill_cmd(
     proposal_id: str = typer.Argument(help="Proposal ID to verify"),
-    skill_file: Path = typer.Option(..., "--skill-file", help="Path to skill .py file"),
 ) -> None:
     """Run verification checks on a built skill."""
-    from kavi.config import ARTIFACTS_OUT, POLICY_PATH
+    from kavi.config import ARTIFACTS_OUT, POLICY_PATH, PROJECT_ROOT
     from kavi.forge.verify import verify_skill
     from kavi.policies.scanner import Policy
 
     conn = _get_conn()
     policy = Policy.from_yaml(POLICY_PATH)
     verification, artifact = verify_skill(
-        conn, proposal_id=proposal_id, skill_file=skill_file,
+        conn, proposal_id=proposal_id,
         policy=policy, output_dir=ARTIFACTS_OUT,
+        project_root=PROJECT_ROOT,
     )
     conn.close()
 
@@ -157,17 +156,15 @@ def verify_skill_cmd(
 @app.command("promote-skill")
 def promote_skill_cmd(
     proposal_id: str = typer.Argument(help="Proposal ID to promote"),
-    skill_file: Path = typer.Option(..., "--skill-file", help="Path to skill .py file"),
-    module_path: str = typer.Option(..., "--module-path", help="Python import path"),
 ) -> None:
     """Promote a verified skill to TRUSTED."""
-    from kavi.config import REGISTRY_PATH
+    from kavi.config import PROJECT_ROOT, REGISTRY_PATH
     from kavi.forge.promote import promote_skill
 
     conn = _get_conn()
     promotion = promote_skill(
-        conn, proposal_id=proposal_id, skill_file=skill_file,
-        module_path=module_path, registry_path=REGISTRY_PATH,
+        conn, proposal_id=proposal_id,
+        project_root=PROJECT_ROOT, registry_path=REGISTRY_PATH,
     )
     conn.close()
     rprint("[green]Skill promoted to TRUSTED[/green]")

@@ -215,7 +215,9 @@ class TestFullForgeFlow:
         with pytest.raises(ValueError, match="expected PROPOSED"):
             build_skill(db, proposal_id=proposal.id, output_dir=artifacts_dir)
 
-    def test_verify_with_clean_skill(self, db, artifacts_dir, skill_file, policy, stub_runner):
+    def test_verify_with_clean_skill(
+        self, db, artifacts_dir, skill_file, policy, stub_runner, tmp_path,
+    ):
         proposal, _ = propose_skill(
             db, name="write_note", description="Write a note",
             io_schema_json=IO_SCHEMA,
@@ -228,9 +230,9 @@ class TestFullForgeFlow:
         mark_build_succeeded(db, build.id)
 
         verification, report = verify_skill(
-            db, proposal_id=proposal.id, skill_file=skill_file,
+            db, proposal_id=proposal.id,
             policy=policy, output_dir=artifacts_dir,
-            runner=stub_runner,
+            project_root=tmp_path, runner=stub_runner,
         )
         assert verification.policy_ok is True
         assert verification.ruff_ok is True
@@ -251,21 +253,23 @@ class TestFullForgeFlow:
         )
         mark_build_succeeded(db, build.id)
 
-        # Write a bad skill file
-        bad_file = tmp_path / "bad_skill.py"
+        # Write a bad skill file at the conventional path
+        bad_dir = tmp_path / "src" / "kavi" / "skills"
+        bad_dir.mkdir(parents=True)
+        bad_file = bad_dir / "bad_skill.py"
         bad_file.write_text("import subprocess\neval('x')\n")
 
         # Use stub for ruff/mypy/pytest but real policy scan
         runner = StubRunner(policy_scan_real=True)
         verification, _ = verify_skill(
-            db, proposal_id=proposal.id, skill_file=bad_file,
+            db, proposal_id=proposal.id,
             policy=policy, output_dir=artifacts_dir,
-            runner=runner,
+            project_root=tmp_path, runner=runner,
         )
         assert verification.policy_ok is False
         assert verification.status == VerificationStatus.FAILED
 
-    def test_verify_fails_on_ruff(self, db, artifacts_dir, skill_file, policy):
+    def test_verify_fails_on_ruff(self, db, artifacts_dir, skill_file, policy, tmp_path):
         proposal, _ = propose_skill(
             db, name="write_note", description="Write a note",
             io_schema_json=IO_SCHEMA,
@@ -279,15 +283,15 @@ class TestFullForgeFlow:
 
         runner = StubRunner(ruff_ok=False)
         verification, _ = verify_skill(
-            db, proposal_id=proposal.id, skill_file=skill_file,
+            db, proposal_id=proposal.id,
             policy=policy, output_dir=artifacts_dir,
-            runner=runner,
+            project_root=tmp_path, runner=runner,
         )
         assert verification.ruff_ok is False
         assert verification.status == VerificationStatus.FAILED
 
     def test_promote_updates_registry(
-        self, db, artifacts_dir, skill_file, policy, registry_path,
+        self, db, artifacts_dir, skill_file, policy, registry_path, tmp_path,
     ):
         # Full flow: propose → build → verify (stub) → promote
         proposal, _ = propose_skill(
@@ -303,15 +307,14 @@ class TestFullForgeFlow:
 
         # Verify with all-pass stub
         verify_skill(
-            db, proposal_id=proposal.id, skill_file=skill_file,
+            db, proposal_id=proposal.id,
             policy=policy, output_dir=artifacts_dir,
-            runner=StubRunner(),
+            project_root=tmp_path, runner=StubRunner(),
         )
 
         promotion = promote_skill(
-            db, proposal_id=proposal.id, skill_file=skill_file,
-            module_path="kavi.skills.write_note.WriteNoteSkill",
-            registry_path=registry_path,
+            db, proposal_id=proposal.id,
+            project_root=tmp_path, registry_path=registry_path,
         )
         assert promotion.to_status == "TRUSTED"
 
@@ -320,13 +323,16 @@ class TestFullForgeFlow:
         assert len(skills) == 1
         assert skills[0]["name"] == "write_note"
         assert skills[0]["hash"]
+        assert skills[0]["module_path"] == "kavi.skills.write_note.WriteNoteSkill"
 
         # Check proposal status
         p = get_proposal(db, proposal.id)
         assert p is not None
         assert p.status == ProposalStatus.TRUSTED
 
-    def test_promote_rejects_non_verified(self, db, artifacts_dir, skill_file, registry_path):
+    def test_promote_rejects_non_verified(
+        self, db, artifacts_dir, skill_file, registry_path, tmp_path,
+    ):
         proposal, _ = propose_skill(
             db, name="write_note", description="Write a note",
             io_schema_json=IO_SCHEMA,
@@ -335,9 +341,8 @@ class TestFullForgeFlow:
         )
         with pytest.raises(ValueError, match="expected VERIFIED"):
             promote_skill(
-                db, proposal_id=proposal.id, skill_file=skill_file,
-                module_path="kavi.skills.write_note.WriteNoteSkill",
-                registry_path=registry_path,
+                db, proposal_id=proposal.id,
+                project_root=tmp_path, registry_path=registry_path,
             )
 
 
@@ -348,7 +353,7 @@ class TestVerifyIntegration:
     Skipped by default. Run with: pytest -m slow
     """
 
-    def test_real_verify_clean_skill(self, db, artifacts_dir, skill_file, policy):
+    def test_real_verify_clean_skill(self, db, artifacts_dir, skill_file, policy, tmp_path):
         proposal, _ = propose_skill(
             db, name="write_note", description="Write a note",
             io_schema_json=IO_SCHEMA,
@@ -361,9 +366,9 @@ class TestVerifyIntegration:
         mark_build_succeeded(db, build.id)
 
         verification, report = verify_skill(
-            db, proposal_id=proposal.id, skill_file=skill_file,
+            db, proposal_id=proposal.id,
             policy=policy, output_dir=artifacts_dir,
-            runner=SubprocessRunner(),
+            project_root=tmp_path, runner=SubprocessRunner(),
         )
         assert verification.policy_ok is True
         assert Path(report.path).exists()
