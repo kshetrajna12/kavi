@@ -87,6 +87,73 @@ def propose_skill_cmd(
     rprint(f"  Spec: {artifact.path}")
 
 
+@app.command("research-skill")
+def research_skill_cmd(
+    build_id: str = typer.Argument(help="Failed build ID to analyze"),
+    hint: str | None = typer.Option(None, "--hint", help="Additional context for research"),
+    advise: bool = typer.Option(True, "--advise/--no-advise", help="Include LLM advisory"),
+) -> None:
+    """Analyze a failed build and produce a research note (D011)."""
+    from kavi.config import ARTIFACTS_OUT
+
+    conn = _get_conn()
+    from kavi.forge.research import research_skill
+
+    try:
+        analysis, artifact = research_skill(
+            conn, build_id=build_id, output_dir=ARTIFACTS_OUT, user_hint=hint,
+        )
+    except ValueError as e:
+        typer.echo(str(e))
+        raise typer.Exit(1)
+
+    rprint(f"[green]Research complete:[/green] {analysis.kind.value}")
+    rprint(f"  Attempt: {analysis.attempt_number}")
+    for fact in analysis.facts:
+        rprint(f"  - {fact}")
+    rprint(f"  Note: {artifact.path}")
+
+    if advise:
+        from kavi.forge.research import advise_retry
+        from kavi.ledger.models import get_artifacts_for_related, get_build
+
+        build = get_build(conn, build_id)
+        if build is None:
+            conn.close()
+            return
+        # Find the original build packet
+        artifacts = get_artifacts_for_related(conn, build.proposal_id)
+        original_packet = ""
+        for art in artifacts:
+            if art.kind.value == "BUILD_PACKET":
+                from pathlib import Path
+
+                p = Path(art.path)
+                if p.exists():
+                    original_packet = p.read_text(encoding="utf-8")
+                    break
+
+        if original_packet:
+            try:
+                proposed, triggers = advise_retry(
+                    conn, analysis=analysis,
+                    original_packet=original_packet,
+                    output_dir=ARTIFACTS_OUT,
+                )
+                if triggers:
+                    trigger_str = ", ".join(t.value for t in triggers)
+                    rprint(f"\n[yellow]Escalation triggers:[/yellow] {trigger_str}")
+                    rprint("[yellow]Human review required before retry.[/yellow]")
+                else:
+                    rprint("\n[green]LLM advisory ready.[/green] No escalation triggers.")
+            except Exception as e:
+                rprint(f"\n[yellow]LLM advisory failed:[/yellow] {e}")
+                rprint("Proceeding with deterministic research only.")
+
+    conn.close()
+    rprint("\n[yellow]Next:[/yellow] kavi build-skill <proposal_id>")
+
+
 @app.command("build-skill")
 def build_skill_cmd(
     proposal_id: str = typer.Argument(help="Proposal ID to build"),
