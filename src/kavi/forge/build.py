@@ -17,11 +17,15 @@ from kavi.ledger.models import (
     Build,
     BuildStatus,
     ProposalStatus,
+    get_artifacts_for_related,
+    get_builds_for_proposal,
     get_proposal,
     insert_build,
     update_build,
     update_proposal_status,
 )
+
+_BUILDABLE = {ProposalStatus.PROPOSED, ProposalStatus.BUILT}
 
 # ---------------------------------------------------------------------------
 # Build packet generation
@@ -80,6 +84,33 @@ tests/test_skill_{name}.py — unit tests
 """
 
 
+def _create_retry_build_packet_content(
+    *,
+    base_content: str,
+    analysis: object,
+    research_note_content: str | None = None,
+    advisory_content: str | None = None,
+) -> str:
+    """Enrich a build packet with retry context from research.
+
+    Appends previous attempt analysis, research findings, and LLM advisory.
+    """
+    from kavi.forge.research import FailureAnalysis
+
+    sections = [base_content.rstrip()]
+    if isinstance(analysis, FailureAnalysis):
+        sections.append(
+            f"\n## Previous Attempt ({analysis.attempt_number})\n"
+            f"- **Failure kind**: {analysis.kind.value}\n"
+            + "\n".join(f"- {f}" for f in analysis.facts)
+        )
+    if research_note_content:
+        sections.append(f"\n## Research Findings\n{research_note_content}")
+    if advisory_content:
+        sections.append(f"\n## LLM Advisory\n{advisory_content}")
+    return "\n".join(sections) + "\n"
+
+
 def build_skill(
     conn: sqlite3.Connection,
     *,
@@ -91,32 +122,77 @@ def build_skill(
 
     Returns (Build, Artifact) for the build packet.
     The actual Claude Code invocation is a separate step (invoke_claude_build).
+
+    Supports retries: PROPOSED and BUILT proposals are buildable.
+    When rebuilding a BUILT proposal, status is reset to PROPOSED.
     """
     proposal = get_proposal(conn, proposal_id)
     if proposal is None:
         raise ValueError(f"Proposal '{proposal_id}' not found")
-    if proposal.status != ProposalStatus.PROPOSED:
+    if proposal.status not in _BUILDABLE:
         raise ValueError(
-            f"Proposal '{proposal_id}' has status {proposal.status}, expected PROPOSED"
+            f"Proposal '{proposal_id}' has status {proposal.status}, "
+            f"expected one of {', '.join(s.value for s in _BUILDABLE)}"
         )
+
+    # Reset BUILT back to PROPOSED for retry
+    if proposal.status == ProposalStatus.BUILT:
+        update_proposal_status(conn, proposal_id, ProposalStatus.PROPOSED)
 
     if branch_name is None:
         branch_name = f"skill/{proposal.name}-{proposal.id[:8]}"
 
+    # Auto-detect attempt number from prior builds
+    prior_builds = get_builds_for_proposal(conn, proposal_id)
+    attempt_number = len(prior_builds) + 1
+    parent_build_id = prior_builds[-1].id if prior_builds else None
+
     build = Build(
         proposal_id=proposal_id,
         branch_name=branch_name,
+        attempt_number=attempt_number,
+        parent_build_id=parent_build_id,
     )
     insert_build(conn, build)
 
-    content = _create_build_packet_content(
+    # Base build packet content
+    base_content = _create_build_packet_content(
         name=proposal.name,
         description=proposal.description,
         io_schema=proposal.io_schema_json,
         side_effect_class=proposal.side_effect_class.value,
     )
+
+    # For retries, enrich with research findings
+    content = base_content
+    if attempt_number > 1 and parent_build_id is not None:
+        research_notes = get_artifacts_for_related(conn, proposal_id)
+        research_content = None
+        for art in reversed(research_notes):
+            if art.kind == ArtifactKind.RESEARCH_NOTE:
+                p = Path(art.path)
+                if p.exists():
+                    research_content = p.read_text(encoding="utf-8")
+                    break
+
+        if research_content:
+            from kavi.forge.research import FailureAnalysis, FailureKind
+
+            # Build a minimal analysis from the research note header
+            analysis = FailureAnalysis(
+                kind=FailureKind.UNKNOWN,
+                facts=["See research note for details"],
+                attempt_number=attempt_number - 1,
+                build_id=parent_build_id,
+            )
+            content = _create_retry_build_packet_content(
+                base_content=base_content,
+                analysis=analysis,
+                research_note_content=research_content,
+            )
+
     artifact = write_build_packet(
-        conn, content=content, proposal_id=proposal_id, output_dir=output_dir,
+        conn, content=content, build_id=build.id, output_dir=output_dir,
     )
 
     return build, artifact

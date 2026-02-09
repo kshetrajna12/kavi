@@ -94,11 +94,12 @@ def write_build_packet(
     conn: sqlite3.Connection,
     *,
     content: str,
-    proposal_id: str,
+    build_id: str,
     output_dir: Path,
+    proposal_id: str | None = None,
 ) -> Artifact:
-    """Write a BUILD_PACKET artifact."""
-    path = output_dir / f"build_packet_{proposal_id}.md"
+    """Write a BUILD_PACKET artifact, keyed by build_id (unique per attempt)."""
+    path = output_dir / f"build_packet_{build_id}.md"
     return write_artifact(
         conn, content=content, path=path, kind=ArtifactKind.BUILD_PACKET,
         related_id=proposal_id,

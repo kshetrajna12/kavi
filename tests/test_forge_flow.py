@@ -218,18 +218,37 @@ class TestFullForgeFlow:
         assert "Build Packet" in content
         assert "write_note" in content
 
-    def test_build_rejects_non_proposed(self, db, artifacts_dir):
+    def test_build_allows_retry_on_built(self, db, artifacts_dir):
+        """BUILT proposals can be rebuilt (retry). Status resets to PROPOSED."""
         proposal, _ = propose_skill(
             db, name="write_note", description="Write a note",
             io_schema_json=IO_SCHEMA,
             side_effect_class=SideEffectClass.FILE_WRITE,
             output_dir=artifacts_dir,
         )
-        build, _ = build_skill(db, proposal_id=proposal.id, output_dir=artifacts_dir)
-        mark_build_succeeded(db, build.id)
+        build1, _ = build_skill(db, proposal_id=proposal.id, output_dir=artifacts_dir)
+        mark_build_succeeded(db, build1.id)
 
-        # Can't build again — status is now BUILT
-        with pytest.raises(ValueError, match="expected PROPOSED"):
+        # Retry — BUILT is now buildable
+        build2, _ = build_skill(db, proposal_id=proposal.id, output_dir=artifacts_dir)
+        assert build2.attempt_number == 2
+        assert build2.parent_build_id == build1.id
+        # Proposal reset to PROPOSED
+        p = get_proposal(db, proposal.id)
+        assert p is not None
+        assert p.status == ProposalStatus.PROPOSED
+
+    def test_build_rejects_verified_and_trusted(self, db, artifacts_dir):
+        """VERIFIED and TRUSTED proposals cannot be built."""
+        from kavi.ledger.models import update_proposal_status
+        proposal, _ = propose_skill(
+            db, name="write_note", description="Write a note",
+            io_schema_json=IO_SCHEMA,
+            side_effect_class=SideEffectClass.FILE_WRITE,
+            output_dir=artifacts_dir,
+        )
+        update_proposal_status(db, proposal.id, ProposalStatus.VERIFIED)
+        with pytest.raises(ValueError, match="expected one of"):
             build_skill(db, proposal_id=proposal.id, output_dir=artifacts_dir)
 
     def test_verify_with_clean_skill(
