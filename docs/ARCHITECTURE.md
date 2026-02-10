@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 248 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 301 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -392,12 +392,80 @@ Semantic search over vault markdown files using Sparkstation `bge-large` embeddi
 
 ---
 
+## Chat v0
+
+The agent layer (`kavi.agent`) is a bounded conversational interface over trusted skills. It is NOT an autonomous agent — it executes at most one action per user message, has no memory across turns, and never retries.
+
+### Boundaries
+
+- **At most one execution per message**: either a single `consume_skill` call, or a fixed 2-step `consume_chain` (search → summarize).
+- **No loops, no retries, no multi-step planning.**
+- **Stateless**: the REPL is just UI; the core (`handle_message`) takes a message and returns a response.
+- **Transparent**: every response includes the parsed intent, planned action, and execution records.
+
+### Supported intents (v0)
+
+| Intent | Kind | Execution |
+|--------|------|-----------|
+| Search and summarize | `search_and_summarize` | 2-step chain: `search_notes` → `summarize_note` |
+| Summarize a note | `summarize_note` | Single skill: `summarize_note` |
+| Write a note | `write_note` | Single skill: `write_note` (requires confirmation) |
+
+Anything else returns `kind="unsupported"` with a help message.
+
+### Architecture
+
+```
+User message
+    ↓
+parse_intent()    ← Sparkstation (one call) OR deterministic fallback
+    ↓
+ParsedIntent      ← discriminated union: search_and_summarize | summarize_note | write_note | unsupported
+    ↓
+intent_to_plan()  ← purely deterministic, no LLM
+    ↓
+PlannedAction     ← SkillAction (single skill) or ChainAction (ChainSpec)
+    ↓
+execute           ← consume_skill() or consume_chain()
+    ↓
+AgentResponse     ← intent + plan + execution records + error
+```
+
+### Side-effect confirmation
+
+- **READ_ONLY** skills execute immediately.
+- **FILE_WRITE** skills require explicit confirmation:
+  - Single-turn mode (`kavi chat -m "..."`): returns `needs_confirmation=true` without executing.
+  - REPL mode: prompts the user and proceeds only on "yes".
+
+### Parser fallback
+
+When Sparkstation is unavailable or returns unparseable JSON, the parser falls back to deterministic heuristics:
+- `summarize <path>` → `SummarizeNoteIntent`
+- `write <title>\n<body>` → `WriteNoteIntent`
+- `search/find <query>` → `SearchAndSummarizeIntent`
+- Anything else → `UnsupportedIntent`
+
+### CLI
+
+```bash
+kavi chat -m "summarize notes/ml.md"     # single-turn, prints AgentResponse JSON
+kavi chat                                 # interactive REPL
+```
+
+---
+
 ## Project layout
 
 ```
 src/kavi/
 ├── cli.py              # Typer CLI entry point
 ├── config.py           # Path constants + Sparkstation config
+├── agent/
+│   ├── core.py         # AgentCore: handle_message orchestrator
+│   ├── models.py       # ParsedIntent, PlannedAction, AgentResponse
+│   ├── parser.py       # LLM intent parser + deterministic fallback
+│   └── planner.py      # Deterministic intent-to-plan mapping
 ├── artifacts/
 │   └── writer.py       # Content-addressed artifact writer
 ├── consumer/

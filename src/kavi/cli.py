@@ -470,6 +470,107 @@ def consume_chain_cmd(
         raise typer.Exit(1)
 
 
+@app.command("chat")
+def chat_cmd(
+    message: str | None = typer.Option(
+        None, "--message", "-m", help="Single-turn message (non-interactive)",
+    ),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+    no_log: bool = typer.Option(
+        False, "--no-log", help="Disable execution logging",
+    ),
+) -> None:
+    """Chat with Kavi — bounded conversational interface over trusted skills."""
+    from pathlib import Path
+
+    from kavi.agent.core import handle_message
+    from kavi.config import REGISTRY_PATH
+
+    effective_log = None if no_log else (Path(log_path) if log_path else None)
+
+    if message is not None:
+        # Single-turn mode
+        resp = handle_message(
+            message,
+            registry_path=REGISTRY_PATH,
+            log_path=effective_log,
+        )
+        rprint(json.dumps(resp.model_dump(), indent=2))
+        if resp.error:
+            raise typer.Exit(1)
+        if resp.needs_confirmation:
+            raise typer.Exit(2)
+        return
+
+    # REPL mode
+    _chat_repl(REGISTRY_PATH, effective_log)
+
+
+def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
+    """Interactive read-eval-print loop for Kavi Chat."""
+    from kavi.agent.core import handle_message
+
+    rprint("[bold]Kavi Chat v0[/bold] — type 'quit' or Ctrl-D to exit")
+    rprint("Supported: search/find, summarize, write note\n")
+
+    while True:
+        try:
+            line = input("kavi> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            rprint("\nBye.")
+            return
+
+        if not line:
+            continue
+        if line.lower() in ("quit", "exit", "q"):
+            rprint("Bye.")
+            return
+
+        resp = handle_message(
+            line,
+            registry_path=registry_path,
+            log_path=log_path,
+        )
+
+        # Handle confirmation flow for FILE_WRITE skills
+        if resp.needs_confirmation:
+            rprint("\n[yellow]Action requires confirmation:[/yellow]")
+            rprint(f"  Intent: {resp.intent.kind}")
+            if resp.plan is not None:
+                rprint(f"  Plan: {json.dumps(resp.plan.model_dump(), indent=4)}")
+            confirm = input("Execute? [y/N] ").strip().lower()
+            if confirm in ("y", "yes"):
+                resp = handle_message(
+                    line,
+                    registry_path=registry_path,
+                    log_path=log_path,
+                    confirmed=True,
+                )
+            else:
+                rprint("[dim]Cancelled.[/dim]\n")
+                continue
+
+        # Pretty-print results
+        if resp.error:
+            rprint(f"[red]Error:[/red] {resp.error}")
+        elif resp.records:
+            for rec in resp.records:
+                status = "[green]OK[/green]" if rec.success else "[red]FAIL[/red]"
+                rprint(f"  {rec.skill_name}: {status}")
+                if rec.output_json:
+                    # Show a compact summary
+                    for key, val in rec.output_json.items():
+                        if isinstance(val, str) and len(val) > 120:
+                            val = val[:120] + "..."
+                        rprint(f"    {key}: {val}")
+
+        # Always emit raw JSON
+        rprint(f"\n[dim]{json.dumps(resp.model_dump(), indent=2)}[/dim]\n")
+
+
 @app.command("search-and-summarize")
 def search_and_summarize_cmd(
     query: str = typer.Option(..., "--query", help="Search query"),
