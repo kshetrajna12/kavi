@@ -28,7 +28,7 @@ class HttpGetJsonOutput(SkillOutput):
 
     url: str
     status_code: int = 0
-    json: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
     truncated: bool = False
     used_secret: bool = False
     error: str | None = None
@@ -149,7 +149,7 @@ class HttpGetJsonSkill(BaseSkill):
         return HttpGetJsonOutput(
             url=url,
             status_code=status_code,
-            json=data,
+            data=data,
             truncated=truncated,
             used_secret=used_secret,
         )

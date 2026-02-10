@@ -29,10 +29,22 @@ skills:
   hash: d31e5d5fcf559b125c7bdbddb61600b441a92ee29c6b19a4a9ae80dca81ad62a
 - name: search_notes
   module_path: kavi.skills.search_notes.SearchNotesSkill
-  description: Semantic search over vault notes via Sparkstation bge-large embeddings with lexical fallback
+  description: Semantic search over vault notes via Sparkstation bge-large embeddings
+    with lexical fallback
   input_model: kavi.skills.search_notes.SearchNotesInput
   output_model: kavi.skills.search_notes.SearchNotesOutput
   side_effect_class: READ_ONLY
   required_secrets: []
   version: 1.0.0
   hash: 7f72872ffb7366e3a5b8c24fec4eef236ffd20c499ebf251beafd9aeabf673b4
+- name: http_get_json
+  module_path: kavi.skills.http_get_json.HttpGetJsonSkill
+  description: Fetch JSON from an HTTP endpoint with host allowlisting and optional
+    API key from environment variable
+  input_model: kavi.skills.http_get_json.HttpGetJsonInput
+  output_model: kavi.skills.http_get_json.HttpGetJsonOutput
+  side_effect_class: NETWORK
+  required_secrets:
+  - API_KEY
+  version: 1.0.0
+  hash: 65f38df9cd0e5a19831d941dc458c2bda180077387405b5dbd2c84add55ffc02

@@ -61,7 +61,7 @@ class TestHttpGetJsonModels:
     def test_output_model_defaults(self):
         out = HttpGetJsonOutput(url="https://example.com")
         assert out.status_code == 0
-        assert out.json is None
+        assert out.data is None
         assert out.truncated is False
         assert out.used_secret is False
         assert out.error is None
@@ -121,7 +121,7 @@ class TestHttpGetJsonSkill:
             ))
 
         assert result.status_code == 200
-        assert result.json == {"status": "ok", "count": 42}
+        assert result.data == {"status": "ok", "count": 42}
         assert result.truncated is False
         assert result.used_secret is False
         assert result.error is None
@@ -143,7 +143,7 @@ class TestHttpGetJsonSkill:
             ))
 
         assert result.used_secret is True
-        assert result.json == {"authed": True}
+        assert result.data == {"authed": True}
         # Verify Authorization header was set
         req_arg = mock_urlopen.call_args[0][0]
         assert req_arg.get_header("Authorization") == "Bearer secret-token-123"
@@ -290,7 +290,7 @@ class TestHttpGetJsonSkill:
             ))
 
         assert result.status_code == 404
-        assert result.json == {"error": "not found"}
+        assert result.data == {"error": "not found"}
         assert result.error is None
 
     def test_validate_and_run(self):
@@ -308,7 +308,7 @@ class TestHttpGetJsonSkill:
             })
 
         assert result["status_code"] == 200
-        assert result["json"] == {"ok": True}
+        assert result["data"] == {"ok": True}
 
     def test_multiple_allowed_hosts(self):
         skill = HttpGetJsonSkill()
@@ -324,5 +324,5 @@ class TestHttpGetJsonSkill:
                 allowed_hosts=["api.example.com", "backup.example.com"],
             ))
 
-        assert result.json == {"source": "backup"}
+        assert result.data == {"source": "backup"}
         assert result.error is None
