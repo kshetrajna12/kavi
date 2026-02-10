@@ -95,6 +95,7 @@ kavi run-skill write_note --json '{"title": "Hello", "body": "World"}'
 | `kavi chat` | Interactive REPL with confirmation flow for FILE_WRITE skills. `search!` prefix shows top snippet |
 | `kavi list-skills` | List TRUSTED skills |
 | `kavi research-skill <build_id>` | Analyze a failed build |
+| `kavi doctor [--json]` | Healthcheck: paths, registry integrity, Sparkstation, toolchain, log sanity |
 
 ## Project layout
 
@@ -108,6 +109,7 @@ src/kavi/
 ├── forge/              # Pipeline stages (propose, build, verify, promote, research)
 ├── ledger/             # SQLite schema, migrations, Pydantic models
 ├── llm/                # Sparkstation client (healthcheck, generate)
+├── ops/                # Operational tooling (doctor healthcheck)
 ├── policies/           # Policy scanner (forbidden imports, eval/exec)
 └── skills/             # BaseSkill ABC, loader + trust verification, skill implementations
 

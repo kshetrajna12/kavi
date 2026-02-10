@@ -526,6 +526,22 @@ In the REPL, `search <query>` shows a compact table (rank, score, path, title). 
 
 ---
 
+## Operational tooling
+
+`kavi doctor [--json]` validates the local environment and prints actionable fixes. Checks:
+
+| Check | What | Failure severity |
+|-------|------|-----------------|
+| Config paths | Vault dir, registry file, execution log writability | fail |
+| Registry integrity | YAML parses, skills importable, hashes match (trust drift detection) | fail |
+| Sparkstation | Gateway reachable (short timeout) | warn (not fatal) |
+| Toolchain | Python >=3.11, uv, ruff on PATH | warn/fail |
+| Log sanity | JSONL parseable, malformed line count | warn |
+
+Implementation in `kavi.ops.doctor` — pure functions returning `CheckResult` models. Does not import forge code or mutate anything.
+
+---
+
 ## Project layout
 
 ```
@@ -558,6 +574,8 @@ src/kavi/
 │   └── models.py       # Pydantic models + DB operations
 ├── llm/
 │   └── spark.py        # Sparkstation client (generate + embed)
+├── ops/
+│   └── doctor.py       # Healthcheck (kavi doctor)
 ├── policies/
 │   └── scanner.py      # Policy scanner
 └── skills/

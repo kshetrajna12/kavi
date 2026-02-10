@@ -767,6 +767,44 @@ def replay_cmd(
         raise typer.Exit(1)
 
 
+@app.command("doctor")
+def doctor_cmd(
+    output_json: bool = typer.Option(
+        False, "--json", help="Output structured JSON instead of human-readable text",
+    ),
+) -> None:
+    """Healthcheck: validate paths, registry, Sparkstation, toolchain, and logs."""
+    import json as _json
+
+    from kavi.config import REGISTRY_PATH, SPARK_BASE_URL, VAULT_OUT
+    from kavi.consumer.log import DEFAULT_LOG_PATH
+    from kavi.ops.doctor import run_all_checks
+
+    report = run_all_checks(
+        vault_out=VAULT_OUT,
+        registry_path=REGISTRY_PATH,
+        log_path=DEFAULT_LOG_PATH,
+        spark_base_url=SPARK_BASE_URL,
+    )
+
+    if output_json:
+        typer.echo(_json.dumps(report.to_dict(), indent=2))
+    else:
+        status_icon = {"ok": "\u2705", "warn": "\u26a0\ufe0f ", "fail": "\u274c"}
+        for c in report.checks:
+            icon = status_icon.get(c.status, "?")
+            rprint(f"  {icon} [bold]{c.name}[/bold]: {c.message}")
+            if c.remediation:
+                rprint(f"      fix: {c.remediation}")
+
+        overall = report.overall_status
+        color = {"ok": "green", "warn": "yellow", "fail": "red"}[overall]
+        rprint(f"\n[{color}]Overall: {overall.upper()}[/{color}]")
+
+    if report.overall_status == "fail":
+        raise typer.Exit(1)
+
+
 @app.command("session")
 def session_cmd(
     execution_id: str | None = typer.Option(
