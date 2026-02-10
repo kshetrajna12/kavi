@@ -425,3 +425,102 @@ def tail_executions_cmd(
         rprint(f"{rec.execution_id[:12]}  {status}  {rec.skill_name}  {rec.started_at}")
         if rec.error:
             rprint(f"  error: {rec.error}")
+
+
+@app.command("consume-chain")
+def consume_chain_cmd(
+    input_json: str = typer.Option(..., "--json", help="ChainSpec as JSON string"),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+    no_log: bool = typer.Option(
+        False, "--no-log", help="Disable execution logging",
+    ),
+) -> None:
+    """Execute a deterministic chain of skills with mapped inputs."""
+    from pathlib import Path
+
+    from kavi.config import REGISTRY_PATH
+    from kavi.consumer.chain import ChainSpec, consume_chain
+
+    try:
+        raw = json.loads(input_json)
+    except json.JSONDecodeError as e:
+        typer.echo(f"Invalid JSON input: {e}")
+        raise typer.Exit(1)
+
+    try:
+        spec = ChainSpec(**raw)
+    except Exception as e:
+        typer.echo(f"Invalid ChainSpec: {e}")
+        raise typer.Exit(1)
+
+    records = consume_chain(REGISTRY_PATH, spec)
+    rprint(json.dumps([r.model_dump() for r in records], indent=2))
+
+    if not no_log:
+        from kavi.consumer.log import ExecutionLogWriter
+
+        writer = ExecutionLogWriter(Path(log_path) if log_path else None)
+        for rec in records:
+            writer.append(rec)
+
+    if any(not r.success for r in records):
+        raise typer.Exit(1)
+
+
+@app.command("search-and-summarize")
+def search_and_summarize_cmd(
+    query: str = typer.Option(..., "--query", help="Search query"),
+    top_k: int = typer.Option(5, "--top-k", help="Number of search results"),
+    style: str = typer.Option("bullet", "--style", help="Summary style (bullet|paragraph)"),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+    no_log: bool = typer.Option(
+        False, "--no-log", help="Disable execution logging",
+    ),
+) -> None:
+    """Search notes and summarize the top result (deterministic composition)."""
+    from pathlib import Path
+
+    from kavi.config import REGISTRY_PATH
+    from kavi.consumer.chain import (
+        ChainOptions,
+        ChainSpec,
+        ChainStep,
+        FieldMapping,
+        consume_chain,
+    )
+
+    spec = ChainSpec(
+        steps=[
+            ChainStep(
+                skill_name="search_notes",
+                input={"query": query, "top_k": top_k},
+            ),
+            ChainStep(
+                skill_name="summarize_note",
+                input_template={"style": style},
+                from_prev=[
+                    FieldMapping(to_field="path", from_path="results.0.path"),
+                ],
+            ),
+        ],
+        options=ChainOptions(stop_on_failure=True),
+    )
+
+    records = consume_chain(REGISTRY_PATH, spec)
+    rprint(json.dumps([r.model_dump() for r in records], indent=2))
+
+    if not no_log:
+        from kavi.consumer.log import ExecutionLogWriter
+
+        writer = ExecutionLogWriter(Path(log_path) if log_path else None)
+        for rec in records:
+            writer.append(rec)
+
+    if any(not r.success for r in records):
+        raise typer.Exit(1)

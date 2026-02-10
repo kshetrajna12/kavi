@@ -281,6 +281,77 @@ It does NOT depend on the ledger, forge, or any build infrastructure.
 
 ---
 
+## Execution chains
+
+The chain executor (`kavi.consumer.chain`) runs a fixed sequence of skill steps with deterministic input mapping between them. No LLM planning or auto-mapping — purely explicit.
+
+### ChainSpec
+
+A chain is defined by a `ChainSpec` containing ordered `ChainStep` entries and `ChainOptions`:
+
+```json
+{
+  "steps": [
+    {
+      "skill_name": "search_notes",
+      "input": {"query": "machine learning", "top_k": 5}
+    },
+    {
+      "skill_name": "summarize_note",
+      "input_template": {"style": "bullet"},
+      "from_prev": [
+        {"to_field": "path", "from_path": "results.0.path"}
+      ]
+    }
+  ],
+  "options": {"stop_on_failure": true}
+}
+```
+
+### Input mapping
+
+Each step specifies either `input` (full JSON) or `input_template` + `from_prev` (mapped from prior outputs). Mappings use dot-path extraction:
+
+| Path | Meaning |
+|------|---------|
+| `field` | `output["field"]` |
+| `field.subfield` | `output["field"]["subfield"]` |
+| `results.0.path` | `output["results"][0]["path"]` |
+
+By default, `from_prev` references the immediately previous step. Set `from_step_index` on a `FieldMapping` to reference an earlier step by index.
+
+### Execution semantics
+
+1. Steps run sequentially. Each produces an `ExecutionRecord`.
+2. **Mapping gate**: If a dot-path extraction fails (missing key, out-of-range index), the step produces a FAILURE record without invoking the skill.
+3. **Schema validation gate**: After mapping, input is validated against the skill's declared schema. Type or missing-field errors produce a FAILURE record without invocation.
+4. **Skill execution**: If mapping + validation pass, executes via `consume_skill()` (reuses trust verification).
+
+### Lineage
+
+- Step 0 has `parent_execution_id = None`.
+- Step *i* > 0 defaults `parent_execution_id` to step *i*-1's `execution_id`.
+- Override with `parent_index` on a `ChainStep` to reference a different step.
+
+### Stop behavior
+
+- `stop_on_failure=true` (default): chain halts after the first failed step.
+- `stop_on_failure=false`: subsequent steps run, but mappings referencing failed step outputs fail cleanly with a descriptive error.
+
+### CLI
+
+```bash
+# Generic chain execution
+kavi consume-chain --json '{"steps": [...], "options": {...}}'
+
+# Convenience: search + summarize top result
+kavi search-and-summarize --query "machine learning" --top-k 5 --style bullet
+```
+
+Both commands log all `ExecutionRecord`s to the JSONL execution log and exit non-zero if any step fails.
+
+---
+
 ## Shipped skills
 
 | Skill | Side Effect | Description |
@@ -331,6 +402,7 @@ src/kavi/
 │   └── writer.py       # Content-addressed artifact writer
 ├── consumer/
 │   ├── shim.py         # Consumer runtime: load, validate, execute, audit
+│   ├── chain.py        # Deterministic skill chain executor
 │   └── log.py          # Append-only JSONL execution log
 ├── forge/
 │   ├── build.py        # Sandbox build, diff gate, Claude invocation

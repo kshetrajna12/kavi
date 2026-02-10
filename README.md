@@ -86,6 +86,8 @@ kavi run-skill write_note --json '{"title": "Hello", "body": "World"}'
 | `kavi promote-skill <proposal_id>` | Promote to TRUSTED |
 | `kavi run-skill <name> --json '{...}'` | Run a TRUSTED skill |
 | `kavi consume-skill <name> --json '{...}'` | Execute a skill, emit [ExecutionRecord](docs/ARCHITECTURE.md#consumer-shim), append to log |
+| `kavi consume-chain --json '{...}'` | Execute a [deterministic skill chain](docs/ARCHITECTURE.md#execution-chains) with mapped inputs |
+| `kavi search-and-summarize --query '...'` | Search notes + summarize top result (convenience chain) |
 | `kavi tail-executions [--n N] [--only-failures] [--skill NAME]` | Show recent execution records from JSONL log |
 | `kavi list-skills` | List TRUSTED skills |
 | `kavi research-skill <build_id>` | Analyze a failed build |
@@ -97,7 +99,7 @@ src/kavi/
 ├── cli.py              # Typer CLI entry point
 ├── config.py           # Path constants + Sparkstation config
 ├── artifacts/          # Content-addressed artifact writer
-├── consumer/           # Consumer shim: execute trusted skills with provenance
+├── consumer/           # Consumer shim + chain executor: execute trusted skills with provenance
 ├── forge/              # Pipeline stages (propose, build, verify, promote, research)
 ├── ledger/             # SQLite schema, migrations, Pydantic models
 ├── llm/                # Sparkstation client (healthcheck, generate)
@@ -106,7 +108,7 @@ src/kavi/
 
 docs/
 ├── ARCHITECTURE.md     # Internal architecture reference
-└── decisions.md        # Append-only decision log (D001–D011)
+└── decisions.md        # Append-only decision log (D001–D012)
 ```
 
 ## Development
