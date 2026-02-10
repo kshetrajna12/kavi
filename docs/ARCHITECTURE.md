@@ -225,6 +225,7 @@ The consumer shim (`kavi.consumer.shim`) is the runtime interface for downstream
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `v` | int | Record schema version (currently `1`) |
 | `execution_id` | str | Unique ID (uuid4 hex), auto-generated |
 | `parent_execution_id` | str \| None | Optional chain to a prior execution |
 | `skill_name` | str | Name of the executed skill |

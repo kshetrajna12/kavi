@@ -33,6 +33,7 @@ class SkillInfo(BaseModel):
 class ExecutionRecord(BaseModel):
     """Auditable record of a single skill execution."""
 
+    v: int = 1
     execution_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     parent_execution_id: str | None = None
     skill_name: str
