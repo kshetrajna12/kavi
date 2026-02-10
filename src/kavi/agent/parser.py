@@ -143,6 +143,8 @@ def _deterministic_parse(
     - summarize <path> [paragraph]  → SkillInvocationIntent(summarize_note)
     - summarize that/it/the result  → SkillInvocationIntent with ref:last
     - write <title>\\n<body>         → WriteNoteIntent
+    - daily <content>               → SkillInvocationIntent(create_daily_note)
+    - add to daily: <content>       → SkillInvocationIntent(create_daily_note)
     - search/find <query>           → SearchAndSummarizeIntent
     - <skill_name> <json>           → SkillInvocationIntent (generic)
 
@@ -182,6 +184,20 @@ def _deterministic_parse(
         body = (write_match.group(2) or "").strip()
         if title:
             return WriteNoteIntent(title=title, body=body)
+
+    # "daily <content>" or "add to daily: <content>"
+    daily_match = re.match(
+        r"^(?:daily|add\s+to\s+daily)[:\s]+(.+)$",
+        msg,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if daily_match:
+        content = daily_match.group(1).strip()
+        if content:
+            return SkillInvocationIntent(
+                skill_name="create_daily_note",
+                input={"content": content},
+            )
 
     # "search <query>" or "find <query>"
     search_match = re.match(

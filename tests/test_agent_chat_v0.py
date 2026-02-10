@@ -476,6 +476,35 @@ class TestParserDeterministic:
         intent = self._parse("searching for python notes")
         assert isinstance(intent, UnsupportedIntent)
 
+    def test_daily_shorthand(self) -> None:
+        intent = self._parse("daily Meeting notes from standup")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "create_daily_note"
+        assert intent.input["content"] == "Meeting notes from standup"
+
+    def test_daily_colon_syntax(self) -> None:
+        intent = self._parse("daily: Shipped search feature")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "create_daily_note"
+        assert intent.input["content"] == "Shipped search feature"
+
+    def test_add_to_daily(self) -> None:
+        intent = self._parse("add to daily: reviewed PR #42")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "create_daily_note"
+        assert intent.input["content"] == "reviewed PR #42"
+
+    def test_add_to_daily_no_colon(self) -> None:
+        intent = self._parse("add to daily reviewed PR #42")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "create_daily_note"
+        assert intent.input["content"] == "reviewed PR #42"
+
+    def test_daily_empty_content_no_match(self) -> None:
+        """'daily' alone should not match."""
+        intent = self._parse("daily")
+        assert isinstance(intent, UnsupportedIntent)
+
     def test_spark_unavailable_triggers_fallback(self) -> None:
         from kavi.llm.spark import SparkUnavailableError
 
