@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 595 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 619 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -481,6 +481,7 @@ The agent layer (`kavi.agent`) is a bounded conversational interface over truste
 | Search and summarize | `search_and_summarize` | 2-step chain: `search_notes` → `summarize_note` |
 | Write a note | `write_note` | Single skill: `write_note` (requires confirmation) |
 | Generic skill invocation | `skill_invocation` | Single skill by name (e.g. `summarize_note`, `http_get_json`) |
+| Refine/correct | `transform` | Re-invoke target skill with field overrides (resolver → `skill_invocation`) |
 | Help / skills listing | `help` | Returns formatted skills index (no execution) |
 
 Anything else returns `kind="unsupported"` with a help message listing available commands and skills.
@@ -518,7 +519,7 @@ AgentResponse     ← intent + plan + records + session + error
 - **READ_ONLY** skills execute immediately.
 - **FILE_WRITE**, **NETWORK**, and **SECRET_READ** skills require explicit confirmation:
   - Single-turn mode (`kavi chat -m "..."`): returns `needs_confirmation=true` without executing. Pass `--confirmed` to pre-confirm.
-  - REPL mode: prompts the user and proceeds only on "yes".
+  - REPL mode: prompts the user and proceeds only on "yes". On confirmation, executes the **stashed plan** via `execute_plan()` — no re-parsing, no session drift.
 
 ### Parser fallback
 
@@ -527,6 +528,8 @@ When Sparkstation is unavailable or returns unparseable JSON, the parser falls b
 - `summarize that/it/the result` → `SkillInvocationIntent` with `ref:last` (D015)
 - `write <title>\n<body>` → `WriteNoteIntent`
 - `write that [to a note]` → `SkillInvocationIntent(write_note)` with `ref:last` (D015)
+- `but paragraph`/`make it bullet`/`no, paragraph` → `TransformIntent` with style override
+- `try X.md instead`/`no, X.md` → `TransformIntent` with path override
 - `again [paragraph]` / `do it again` → re-run with `ref:last` (D015)
 - `search/find for that/it` → `SearchAndSummarizeIntent` with `ref:last` (D015)
 - `search/find again` → `SearchAndSummarizeIntent` with `ref:last_search` (D015)
@@ -615,5 +618,5 @@ tests/
 └── ...                    # See test markers above
 docs/
 ├── ARCHITECTURE.md     # This file
-└── decisions.md        # Append-only decision log (D001–D015)
+└── decisions.md        # Append-only decision log (D001–D016)
 ```
