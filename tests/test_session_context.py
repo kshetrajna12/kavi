@@ -469,6 +469,7 @@ class TestResolveAgain:
         assert result.skill_name == "summarize_note"
         assert result.input["style"] == "paragraph"
         assert result.input["path"] == "a.md"
+        assert "summary" not in result.input  # output field, not input
 
     def test_again_no_anchors_returns_ambiguity(self) -> None:
         from kavi.agent.resolver import resolve_refs
@@ -532,7 +533,7 @@ class TestResolveWriteThat:
         assert isinstance(result, SkillInvocationIntent)
         assert result.skill_name == "write_note"
         assert result.input["body"] == "Great notes"
-        assert "ml.md" in result.input["title"]
+        assert result.input["title"] == "Summary: ml"
 
     def test_write_that_no_anchors_returns_ambiguity(self) -> None:
         from kavi.agent.resolver import resolve_refs

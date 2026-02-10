@@ -35,6 +35,15 @@ def _anchor_value(anchor: Anchor) -> str | None:
     return None
 
 
+_SKILL_INPUT_FIELDS: dict[str, set[str]] = {
+    "search_notes": {"query", "top_k"},
+    "summarize_note": {"path", "style"},
+    "write_note": {"path", "title", "body", "tags"},
+    "read_notes_by_tag": {"tag"},
+    "http_get_json": {"url", "headers"},
+}
+
+
 def _resolve_again(
     intent: SkillInvocationIntent,
     session: SessionContext,
@@ -49,20 +58,18 @@ def _resolve_again(
         )
 
     last = session.anchors[-1]
-    # Rebuild input from the anchor's data, plus any overrides from intent
-    new_input: dict[str, Any] = dict(last.data)
+    # Only copy anchor data fields that are valid inputs for the skill
+    allowed = _SKILL_INPUT_FIELDS.get(last.skill_name)
+    new_input: dict[str, Any] = {}
+    for key, val in last.data.items():
+        if allowed is None or key in allowed:
+            new_input[key] = val
+
+    # Apply overrides from the intent (e.g. style=paragraph)
     for key, val in intent.input.items():
         if key == "ref:again":
             continue  # marker, not a real field
         new_input[key] = val
-
-    # For search_notes, use query from anchor
-    if last.skill_name == "search_notes" and "query" in last.data:
-        new_input.setdefault("query", last.data["query"])
-
-    # For summarize_note, use path from anchor
-    if last.skill_name == "summarize_note" and "path" in last.data:
-        new_input.setdefault("path", last.data["path"])
 
     return SkillInvocationIntent(
         skill_name=last.skill_name,
@@ -98,8 +105,10 @@ def _resolve_write_that(
         title = f"Notes: {last.data['query']}"
     elif "path" in last.data:
         # Use filename without extension as title
-        path = last.data["path"]
-        title = f"Summary: {path.rsplit('/', 1)[-1]}"
+        fname = last.data["path"].rsplit("/", 1)[-1]
+        if fname.endswith(".md"):
+            fname = fname[:-3]
+        title = f"Summary: {fname}"
 
     path = f"Inbox/AI/{title}.md"
 
