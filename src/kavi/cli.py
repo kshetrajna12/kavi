@@ -588,8 +588,11 @@ def format_search_results(output_json: dict, verbose: bool = False) -> str:
 def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
     from kavi.agent.core import handle_message
+    from kavi.agent.models import SessionContext
 
     rprint("[bold]Kavi Chat v0[/bold] — type 'help' for commands, 'quit' to exit\n")
+
+    session = SessionContext()
 
     while True:
         try:
@@ -618,6 +621,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
             registry_path=registry_path,
             log_path=log_path,
             parse_mode="deterministic",
+            session=session,
         )
 
         # If write_note with empty body, prompt for body before confirming
@@ -649,6 +653,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                     registry_path=registry_path,
                     log_path=log_path,
                     parse_mode="deterministic",
+                    session=session,
                 )
             except (EOFError, KeyboardInterrupt):
                 rprint("\nBye.")
@@ -671,10 +676,15 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                     log_path=log_path,
                     confirmed=True,
                     parse_mode="deterministic",
+                    session=session,
                 )
             else:
                 rprint("[dim]Cancelled.[/dim]\n")
                 continue
+
+        # Accumulate session context (D015)
+        if resp.session is not None:
+            session = resp.session
 
         # Show parser warnings (trailing intents ignored, etc.)
         for w in resp.warnings:
