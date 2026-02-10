@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-import json
-from contextlib import ExitStack
-from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
-from pydantic import BaseModel
-
+from kavi.agent.core import handle_message
 from kavi.agent.models import (
     AmbiguityResponse,
     Anchor,
+    ParsedIntent,
     SessionContext,
     SkillInvocationIntent,
+    WriteNoteIntent,
     _extract_anchor_data,
 )
-from kavi.consumer.shim import ExecutionRecord, SkillInfo
-from kavi.skills.base import BaseSkill, SkillInput, SkillOutput
-
+from kavi.agent.parser import parse_intent
+from kavi.consumer.shim import ExecutionRecord
+from tests.test_agent_chat_v0 import (
+    FAKE_REGISTRY,
+    SKILL_INFOS,
+    _ctx,
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -41,6 +42,21 @@ def _make_record(
         error=None if success else "fail",
         started_at="2026-02-10T00:00:00",
         finished_at="2026-02-10T00:00:01",
+    )
+
+
+def _anchor(
+    skill: str,
+    eid: str,
+    data: dict[str, Any] | None = None,
+    label: str = "",
+) -> Anchor:
+    """Shorthand anchor constructor for tests."""
+    return Anchor(
+        label=label or f"{skill} result",
+        execution_id=eid,
+        skill_name=skill,
+        data=data or {},
     )
 
 
@@ -100,7 +116,9 @@ class TestExtractAnchorData:
 class TestAddFromRecords:
     def test_successful_record_creates_anchor(self) -> None:
         ctx = SessionContext()
-        rec = _make_record("search_notes", {"query": "ml", "results": []})
+        rec = _make_record(
+            "search_notes", {"query": "ml", "results": []},
+        )
         ctx.add_from_records([rec])
         assert len(ctx.anchors) == 1
         assert ctx.anchors[0].skill_name == "search_notes"
@@ -121,8 +139,16 @@ class TestAddFromRecords:
     def test_multiple_records_create_multiple_anchors(self) -> None:
         ctx = SessionContext()
         recs = [
-            _make_record("search_notes", {"query": "q", "results": []}, execution_id="aaa"),
-            _make_record("summarize_note", {"path": "a.md", "summary": "s"}, execution_id="bbb"),
+            _make_record(
+                "search_notes",
+                {"query": "q", "results": []},
+                execution_id="aaa",
+            ),
+            _make_record(
+                "summarize_note",
+                {"path": "a.md", "summary": "s"},
+                execution_id="bbb",
+            ),
         ]
         ctx.add_from_records(recs)
         assert len(ctx.anchors) == 2
@@ -130,7 +156,11 @@ class TestAddFromRecords:
     def test_sliding_window_caps_at_10(self) -> None:
         ctx = SessionContext()
         for i in range(15):
-            rec = _make_record("search_notes", {"query": f"q{i}", "results": []}, execution_id=f"id{i:03d}")
+            rec = _make_record(
+                "search_notes",
+                {"query": f"q{i}", "results": []},
+                execution_id=f"id{i:03d}",
+            )
             ctx.add_from_records([rec])
         assert len(ctx.anchors) == 10
         # Oldest evicted, newest kept
@@ -145,9 +175,9 @@ class TestResolve:
     def _ctx_with_anchors(self) -> SessionContext:
         ctx = SessionContext()
         ctx.anchors = [
-            Anchor(label="search_notes result", execution_id="aaa111", skill_name="search_notes", data={"query": "ml"}),
-            Anchor(label="summarize_note result", execution_id="bbb222", skill_name="summarize_note", data={"path": "a.md"}),
-            Anchor(label="search_notes result", execution_id="ccc333", skill_name="search_notes", data={"query": "python"}),
+            _anchor("search_notes", "aaa111", {"query": "ml"}),
+            _anchor("summarize_note", "bbb222", {"path": "a.md"}),
+            _anchor("search_notes", "ccc333", {"query": "python"}),
         ]
         return ctx
 
@@ -238,25 +268,21 @@ class TestAmbiguous:
     def test_exec_prefix_multiple_matches(self) -> None:
         ctx = SessionContext()
         ctx.anchors = [
-            Anchor(label="a", execution_id="abc111", skill_name="s1", data={}),
-            Anchor(label="b", execution_id="abc222", skill_name="s2", data={}),
-            Anchor(label="c", execution_id="def333", skill_name="s3", data={}),
+            _anchor("s1", "abc111"),
+            _anchor("s2", "abc222"),
+            _anchor("s3", "def333"),
         ]
         candidates = ctx.ambiguous("exec:abc")
         assert len(candidates) == 2
 
     def test_exec_prefix_no_match(self) -> None:
         ctx = SessionContext()
-        ctx.anchors = [
-            Anchor(label="a", execution_id="abc111", skill_name="s1", data={}),
-        ]
+        ctx.anchors = [_anchor("s1", "abc111")]
         assert ctx.ambiguous("exec:zzz") == []
 
     def test_non_exec_ref_returns_empty(self) -> None:
         ctx = SessionContext()
-        ctx.anchors = [
-            Anchor(label="a", execution_id="abc111", skill_name="s1", data={}),
-        ]
+        ctx.anchors = [_anchor("s1", "abc111")]
         assert ctx.ambiguous("last") == []
 
     def test_empty_session(self) -> None:
@@ -286,7 +312,10 @@ class TestResolver:
 
         ctx = SessionContext()
         ctx.anchors = [
-            Anchor(label="a", execution_id="aaa", skill_name="search_notes", data={"top_result_path": "x.md"}),
+            _anchor(
+                "search_notes", "aaa",
+                {"top_result_path": "x.md"},
+            ),
         ]
         intent = SkillInvocationIntent(
             skill_name="summarize_note",
@@ -305,7 +334,10 @@ class TestResolver:
                 label="search_notes result",
                 execution_id="aaa",
                 skill_name="search_notes",
-                data={"query": "ml", "top_result_path": "notes/ml.md"},
+                data={
+                    "query": "ml",
+                    "top_result_path": "notes/ml.md",
+                },
             ),
         ]
         intent = SkillInvocationIntent(
@@ -322,8 +354,14 @@ class TestResolver:
 
         ctx = SessionContext()
         ctx.anchors = [
-            Anchor(label="a", execution_id="aaa", skill_name="summarize_note", data={"path": "old.md"}),
-            Anchor(label="b", execution_id="bbb", skill_name="search_notes", data={"top_result_path": "found.md"}),
+            _anchor(
+                "summarize_note", "aaa",
+                {"path": "old.md"},
+            ),
+            _anchor(
+                "search_notes", "bbb",
+                {"top_result_path": "found.md"},
+            ),
         ]
         intent = SkillInvocationIntent(
             skill_name="summarize_note",
@@ -350,7 +388,10 @@ class TestResolver:
 
         ctx = SessionContext()
         ctx.anchors = [
-            Anchor(label="a", execution_id="abc123def", skill_name="search_notes", data={"top_result_path": "x.md"}),
+            _anchor(
+                "search_notes", "abc123def",
+                {"top_result_path": "x.md"},
+            ),
         ]
         intent = SkillInvocationIntent(
             skill_name="summarize_note",
@@ -369,9 +410,22 @@ class TestExtractAnchors:
         from kavi.agent.resolver import extract_anchors
 
         records = [
-            _make_record("search_notes", {"query": "ml", "results": [{"path": "a.md", "score": 0.9}]}, execution_id="r1"),
-            _make_record("summarize_note", None, success=False, execution_id="r2"),
-            _make_record("summarize_note", {"path": "a.md", "summary": "s"}, execution_id="r3"),
+            _make_record(
+                "search_notes",
+                {"query": "ml", "results": [
+                    {"path": "a.md", "score": 0.9},
+                ]},
+                execution_id="r1",
+            ),
+            _make_record(
+                "summarize_note", None,
+                success=False, execution_id="r2",
+            ),
+            _make_record(
+                "summarize_note",
+                {"path": "a.md", "summary": "s"},
+                execution_id="r3",
+            ),
         ]
         ctx = extract_anchors(records, existing=None)
         assert len(ctx.anchors) == 2
@@ -383,10 +437,14 @@ class TestExtractAnchors:
 
         existing = SessionContext()
         existing.anchors = [
-            Anchor(label="old", execution_id="old1", skill_name="s", data={}),
+            _anchor("s", "old1"),
         ]
         records = [
-            _make_record("search_notes", {"query": "q", "results": []}, execution_id="new1"),
+            _make_record(
+                "search_notes",
+                {"query": "q", "results": []},
+                execution_id="new1",
+            ),
         ]
         ctx = extract_anchors(records, existing=existing)
         assert len(ctx.anchors) == 2
@@ -394,21 +452,14 @@ class TestExtractAnchors:
         assert ctx.anchors[1].execution_id == "new1"
 
 
-# ── Integration: handle_message with session ──────────────────────────
-
-# Reuse stubs from test_agent_chat_v0
-
 # ── Parser ref pattern tests ──────────────────────────────────────────
-
-from kavi.agent.parser import parse_intent
 
 
 class TestParserRefPatterns:
     """Deterministic parser emits ref markers for 'that'/'it'/'again'."""
 
     def _parse(self, msg: str) -> ParsedIntent:
-        from tests.test_agent_chat_v0 import SKILL_INFOS as _si
-        intent, _ = parse_intent(msg, _si, mode="deterministic")
+        intent, _ = parse_intent(msg, SKILL_INFOS, mode="deterministic")
         return intent
 
     def test_summarize_that(self) -> None:
@@ -474,19 +525,12 @@ class TestParserRefPatterns:
 
     def test_write_real_title_not_ref(self) -> None:
         """'write My Title' should NOT match ref pattern."""
-        from kavi.agent.models import WriteNoteIntent
         intent = self._parse("write My Title")
         assert isinstance(intent, WriteNoteIntent)
         assert intent.title == "My Title"
 
 
-from tests.test_agent_chat_v0 import (
-    FAKE_REGISTRY,
-    SKILL_INFOS,
-    _ALL_EFFECTS,
-    _ctx,
-)
-from kavi.agent.core import handle_message
+# ── Integration: handle_message with session ──────────────────────────
 
 
 class TestHandleMessageWithSession:
@@ -556,12 +600,10 @@ class TestHandleMessageWithSession:
                 session=session,
             )
         # Even on error, if session was passed, we get it back
-        # (may be unchanged)
         assert resp.error is not None
 
     def test_ref_resolution_in_handle_message(self) -> None:
         """ref:last in input resolves to prior search result."""
-        # First turn: search (produces search + summarize anchors)
         session = SessionContext()
         with _ctx():
             resp1 = handle_message(
@@ -573,7 +615,10 @@ class TestHandleMessageWithSession:
         session = resp1.session
         assert session is not None
         # Find the search_notes anchor
-        search_anchors = [a for a in session.anchors if a.skill_name == "search_notes"]
+        search_anchors = [
+            a for a in session.anchors
+            if a.skill_name == "search_notes"
+        ]
         assert len(search_anchors) == 1
         assert "top_result_path" in search_anchors[0].data
 
