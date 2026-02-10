@@ -283,3 +283,40 @@ The skill + test files remain **required** (gate fails if missing). The runtime 
 - `http_get_json` can be proposed with `--side-effect NETWORK --required-secrets '["API_KEY"]'`
 
 ---
+
+## D015: SessionContext — anchor-based reference resolution (2026-02-10)
+
+**Status:** `CURRENT`
+
+**Context:** Chat v0 (D013) is stateless — each `handle_message()` call is independent. Users can't say "summarize that" or "do it again but shorter" because there's no memory of what "that" refers to. Adding full conversation history would violate the bounded/deterministic design (invariant #8), but lightweight references to prior execution results are safe.
+
+**Decision:** Add `SessionContext` — a sliding window of up to 10 `Anchor` objects extracted from execution records. Each successful execution produces one anchor containing the skill name, execution ID, and a curated subset of the output (not the full blob). A deterministic resolver binds ref markers (`last`, `last_<skill>`, `exec:<id>`) to concrete anchor values between parse and plan.
+
+**Components:**
+1. **Anchor model** — `kind` (execution|artifact), `label`, `execution_id`, `skill_name`, `data` (curated subset)
+2. **SessionContext** — `anchors: list[Anchor]` with `add_from_records()`, `resolve(ref)`, `ambiguous(ref)`
+3. **Resolver** (`agent/resolver.py`) — `resolve_refs(intent, session)` runs between parse and plan, replacing ref markers with concrete values. Returns `AmbiguityResponse` if ref is ambiguous.
+4. **Parser ref markers** — LLM prompt and deterministic fallback emit `ref:last`, `ref:last_<skill>` for "that"/"it"/"the result"/"again"
+5. **REPL accumulation** — `_chat_repl` maintains `SessionContext` across turns, passes to `handle_message`, receives updated session in response
+
+**Ref patterns (deterministic):**
+- `last` / `that` / `it` / `the result` → most recent anchor
+- `last_<skill>` → most recent anchor for named skill (e.g. `last_search`)
+- `exec:<id_prefix>` → anchor by execution ID prefix match
+
+**Key constraints:**
+- `session=None` preserves backward compatibility (stateless mode)
+- Works without Sparkstation — deterministic fallback handles refs too
+- Anchors are capped at 10 (sliding window, oldest evicted first)
+- If ref is ambiguous (multiple candidates), return disambiguation prompt instead of guessing
+- No persistence — session lives only in REPL memory, dies when process exits
+
+**Rationale:** Anchor-based refs are minimal, deterministic, and inspectable. They don't require conversation history, LLM memory, or persistent state. The resolver is a pure function that can be tested independently. The sliding window prevents unbounded growth.
+
+**Implication:**
+- `AgentResponse` gains `session: SessionContext | None` field
+- `handle_message()` gains `session: SessionContext | None` parameter
+- New file: `src/kavi/agent/resolver.py`
+- Parser changes: ref marker detection in both LLM and deterministic modes
+- REPL changes: session accumulation across turns
+- Single-turn CLI mode remains stateless (`session=None`)
