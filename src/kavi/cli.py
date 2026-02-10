@@ -591,8 +591,8 @@ def format_search_results(output_json: dict, verbose: bool = False) -> str:
 
 def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
-    from kavi.agent.core import handle_message
-    from kavi.agent.models import SessionContext
+    from kavi.agent.core import execute_plan, handle_message
+    from kavi.agent.models import SessionContext, SkillAction
 
     rprint("[bold]Kavi Chat v0[/bold] — type 'help' for commands, 'quit' to exit\n")
 
@@ -628,7 +628,8 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
             session=session,
         )
 
-        # If write_note with empty body, prompt for body before confirming
+        # If write_note with empty body, prompt for body then update
+        # the stashed plan (no re-parse)
         if (
             resp.needs_confirmation
             and hasattr(resp.intent, "kind")
@@ -651,14 +652,17 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                     rprint("[dim]No body entered, cancelled.[/dim]\n")
                     continue
                 body = "\n".join(body_lines)
-                effective_msg = f"write {resp.intent.title}\n{body}"
-                resp = handle_message(
-                    effective_msg,
-                    registry_path=registry_path,
-                    log_path=log_path,
-                    parse_mode="deterministic",
-                    session=session,
-                )
+                # Update stashed plan with body — no re-parse
+                if isinstance(resp.plan, SkillAction):
+                    resp = resp.model_copy(
+                        update={
+                            "plan": SkillAction(
+                                skill_name=resp.plan.skill_name,
+                                input={**resp.plan.input, "body": body},
+                            ),
+                            "error": None,
+                        },
+                    )
             except (EOFError, KeyboardInterrupt):
                 rprint("\nBye.")
                 return
@@ -674,13 +678,13 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                 rprint(f"  Plan: {plan_json}")
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
-                resp = handle_message(
-                    effective_msg,
+                resp = execute_plan(
+                    resp.plan,
+                    resp.intent,
                     registry_path=registry_path,
                     log_path=log_path,
-                    confirmed=True,
-                    parse_mode="deterministic",
                     session=session,
+                    warnings=resp.warnings,
                 )
             else:
                 rprint("[dim]Cancelled.[/dim]\n")

@@ -1157,3 +1157,153 @@ class TestHandleMessageHelp:
         assert data["intent"]["kind"] == "help"
         assert data["help_text"] is not None
         assert data["records"] == []
+
+
+# ── execute_plan tests (Phase 4: stashed confirmation) ────────────────
+
+
+class TestExecutePlan:
+    """execute_plan executes a pre-resolved plan without re-parsing."""
+
+    def test_executes_skill_action(self) -> None:
+        from kavi.agent.core import execute_plan
+
+        plan = SkillAction(
+            skill_name="summarize_note",
+            input={"path": "notes/ml.md", "style": "bullet"},
+        )
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note",
+            input={"path": "notes/ml.md", "style": "bullet"},
+        )
+        with _ctx():
+            resp = execute_plan(
+                plan, intent, registry_path=FAKE_REGISTRY,
+            )
+        assert resp.error is None
+        assert len(resp.records) == 1
+        assert resp.records[0].success
+        assert resp.records[0].skill_name == "summarize_note"
+
+    def test_executes_chain_action(self) -> None:
+        from kavi.agent.core import execute_plan
+
+        plan = intent_to_plan(SearchAndSummarizeIntent(query="ml"))
+        assert isinstance(plan, ChainAction)
+        with _ctx():
+            resp = execute_plan(
+                plan,
+                SearchAndSummarizeIntent(query="ml"),
+                registry_path=FAKE_REGISTRY,
+            )
+        assert resp.error is None
+        assert len(resp.records) == 2
+
+    def test_updates_session(self) -> None:
+        from kavi.agent.core import execute_plan
+        from kavi.agent.models import SessionContext
+
+        session = SessionContext()
+        plan = SkillAction(
+            skill_name="summarize_note",
+            input={"path": "a.md", "style": "bullet"},
+        )
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note",
+            input={"path": "a.md"},
+        )
+        with _ctx():
+            resp = execute_plan(
+                plan, intent,
+                registry_path=FAKE_REGISTRY,
+                session=session,
+            )
+        assert resp.session is not None
+        assert len(resp.session.anchors) == 1
+        assert resp.session.anchors[0].skill_name == "summarize_note"
+
+    def test_no_session_returns_none_session(self) -> None:
+        from kavi.agent.core import execute_plan
+
+        plan = SkillAction(
+            skill_name="summarize_note",
+            input={"path": "a.md", "style": "bullet"},
+        )
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note", input={"path": "a.md"},
+        )
+        with _ctx():
+            resp = execute_plan(
+                plan, intent, registry_path=FAKE_REGISTRY,
+            )
+        assert resp.session is None
+
+    def test_preserves_warnings(self) -> None:
+        from kavi.agent.core import execute_plan
+
+        plan = SkillAction(
+            skill_name="summarize_note",
+            input={"path": "a.md", "style": "bullet"},
+        )
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note", input={"path": "a.md"},
+        )
+        with _ctx():
+            resp = execute_plan(
+                plan, intent,
+                registry_path=FAKE_REGISTRY,
+                warnings=["trailing intent ignored"],
+            )
+        assert resp.warnings == ["trailing intent ignored"]
+
+    def test_logs_to_file(self, tmp_path: Path) -> None:
+        from kavi.agent.core import execute_plan
+
+        log_file = tmp_path / "exec.jsonl"
+        plan = SkillAction(
+            skill_name="summarize_note",
+            input={"path": "a.md", "style": "bullet"},
+        )
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note", input={"path": "a.md"},
+        )
+        with _ctx():
+            execute_plan(
+                plan, intent,
+                registry_path=FAKE_REGISTRY,
+                log_path=log_file,
+            )
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 1
+        rec = json.loads(lines[0])
+        assert rec["skill_name"] == "summarize_note"
+
+    def test_stash_matches_handle_message_plan(self) -> None:
+        """Plan from handle_message can be executed by execute_plan."""
+        from kavi.agent.core import execute_plan
+        from kavi.agent.models import SessionContext
+
+        session = SessionContext()
+        # Step 1: handle_message returns needs_confirmation
+        with _ctx():
+            resp1 = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert resp1.needs_confirmation is True
+        assert resp1.plan is not None
+
+        # Step 2: execute the stashed plan directly
+        with _ctx():
+            resp2 = execute_plan(
+                resp1.plan,
+                resp1.intent,
+                registry_path=FAKE_REGISTRY,
+                session=session,
+            )
+        assert resp2.error is None
+        assert len(resp2.records) == 1
+        assert resp2.records[0].success
+        assert resp2.records[0].skill_name == "write_note"

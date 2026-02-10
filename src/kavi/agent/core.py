@@ -16,6 +16,7 @@ from kavi.agent.models import (
     AmbiguityResponse,
     ChainAction,
     HelpIntent,
+    ParsedIntent,
     SessionContext,
     SkillAction,
     UnsupportedIntent,
@@ -189,6 +190,56 @@ def handle_message(
         plan=plan,
         records=records,
         warnings=warnings,
+        error=error,
+        session=updated_session,
+    )
+
+
+def execute_plan(
+    plan: SkillAction | ChainAction,
+    intent: ParsedIntent,
+    *,
+    registry_path: Path,
+    log_path: Path | None = None,
+    session: SessionContext | None = None,
+    warnings: list[str] | None = None,
+) -> AgentResponse:
+    """Execute a previously resolved plan without re-parsing.
+
+    Used by the REPL to execute a stashed plan after user confirmation.
+    The plan must have been produced by a prior handle_message() call
+    with all refs already resolved and anchors bound.
+    """
+    try:
+        records = _execute(plan, registry_path)
+    except Exception as exc:  # noqa: BLE001
+        return AgentResponse(
+            intent=intent,
+            plan=plan,
+            warnings=warnings or [],
+            error=f"Execution error: {exc}",
+            session=session,
+        )
+
+    if log_path is not None:
+        writer = ExecutionLogWriter(log_path)
+        for rec in records:
+            writer.append(rec)
+
+    updated_session = None
+    if session is not None:
+        updated_session = extract_anchors(records, existing=session)
+
+    error = None
+    if any(not r.success for r in records):
+        failed = [r for r in records if not r.success]
+        error = f"{len(failed)} step(s) failed: {failed[0].error}"
+
+    return AgentResponse(
+        intent=intent,
+        plan=plan,
+        records=records,
+        warnings=warnings or [],
         error=error,
         session=updated_session,
     )
