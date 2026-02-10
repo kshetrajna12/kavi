@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+from kavi.agent.constants import CHAT_DEFAULT_ALLOWED_EFFECTS, CONFIRM_SIDE_EFFECTS
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
@@ -23,17 +24,6 @@ from kavi.agent.planner import intent_to_plan
 from kavi.consumer.chain import consume_chain
 from kavi.consumer.log import ExecutionLogWriter
 from kavi.consumer.shim import ExecutionRecord, SkillInfo, consume_skill, get_trusted_skills
-
-# Side-effect classes that require user confirmation before execution
-_CONFIRM_SIDE_EFFECTS = {"FILE_WRITE", "NETWORK", "SECRET_READ"}
-
-# Side-effect classes allowed from the chat interface by default.
-# NETWORK and SECRET_READ are gated — they must be explicitly enabled
-# via the allowed_effects parameter to prevent accidental exposure of
-# new skills through conversation.
-CHAT_DEFAULT_ALLOWED_EFFECTS: frozenset[str] = frozenset({
-    "READ_ONLY", "FILE_WRITE",
-})
 
 
 def handle_message(
@@ -203,10 +193,10 @@ def _needs_confirmation(
     skill_effects = {s.name: s.side_effect_class for s in skills}
 
     if isinstance(plan, SkillAction):
-        return skill_effects.get(plan.skill_name, "") in _CONFIRM_SIDE_EFFECTS
+        return skill_effects.get(plan.skill_name, "") in CONFIRM_SIDE_EFFECTS
     if isinstance(plan, ChainAction):
         return any(
-            skill_effects.get(step.skill_name, "") in _CONFIRM_SIDE_EFFECTS
+            skill_effects.get(step.skill_name, "") in CONFIRM_SIDE_EFFECTS
             for step in plan.chain.steps
         )
     return False

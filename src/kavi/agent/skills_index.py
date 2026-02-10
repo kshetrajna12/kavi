@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from kavi.agent.core import _CONFIRM_SIDE_EFFECTS, CHAT_DEFAULT_ALLOWED_EFFECTS
+from kavi.agent.constants import CHAT_DEFAULT_ALLOWED_EFFECTS, CONFIRM_SIDE_EFFECTS
 from kavi.consumer.shim import SkillInfo
 
 PolicyLabel = Literal["allowed", "confirm", "blocked"]
@@ -51,7 +51,7 @@ def policy_label(
     """
     if side_effect_class not in allowed_effects:
         return "blocked"
-    if side_effect_class in _CONFIRM_SIDE_EFFECTS:
+    if side_effect_class in CONFIRM_SIDE_EFFECTS:
         return "confirm"
     return "allowed"
 

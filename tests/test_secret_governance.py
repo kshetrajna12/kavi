@@ -356,20 +356,20 @@ def test_secret_leak_scan_file(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 def test_confirm_network_skill():
-    from kavi.agent.core import _CONFIRM_SIDE_EFFECTS
-    assert "NETWORK" in _CONFIRM_SIDE_EFFECTS
+    from kavi.agent.constants import CONFIRM_SIDE_EFFECTS
+    assert "NETWORK" in CONFIRM_SIDE_EFFECTS
 
 
 def test_confirm_secret_read_skill():
-    from kavi.agent.core import _CONFIRM_SIDE_EFFECTS
-    assert "SECRET_READ" in _CONFIRM_SIDE_EFFECTS
+    from kavi.agent.constants import CONFIRM_SIDE_EFFECTS
+    assert "SECRET_READ" in CONFIRM_SIDE_EFFECTS
 
 
 def test_confirm_file_write_still_works():
-    from kavi.agent.core import _CONFIRM_SIDE_EFFECTS
-    assert "FILE_WRITE" in _CONFIRM_SIDE_EFFECTS
+    from kavi.agent.constants import CONFIRM_SIDE_EFFECTS
+    assert "FILE_WRITE" in CONFIRM_SIDE_EFFECTS
 
 
 def test_read_only_no_confirm():
-    from kavi.agent.core import _CONFIRM_SIDE_EFFECTS
-    assert "READ_ONLY" not in _CONFIRM_SIDE_EFFECTS
+    from kavi.agent.constants import CONFIRM_SIDE_EFFECTS
+    assert "READ_ONLY" not in CONFIRM_SIDE_EFFECTS

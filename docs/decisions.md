@@ -267,7 +267,7 @@ The skill + test files remain **required** (gate fails if missing). The runtime 
 
 3. **Secret-leak detection** — Best-effort AST rule (`secret_leak`) in policy scanner. Detects `print(os.environ[...])`, `print(os.getenv(...))`, and f-string interpolation of env vars in print/log calls. Always-on, not configurable. Cannot track variable flow (by design — catches obvious patterns).
 
-4. **Confirmation gate expansion** — `_CONFIRM_SIDE_EFFECTS` in agent core expanded from `{FILE_WRITE}` to `{FILE_WRITE, NETWORK, SECRET_READ}`. Both network and secret access require explicit user consent.
+4. **Confirmation gate expansion** — `CONFIRM_SIDE_EFFECTS` in `agent/constants.py` expanded from `{FILE_WRITE}` to `{FILE_WRITE, NETWORK, SECRET_READ}`. Both network and secret access require explicit user consent.
 
 5. **CLI flag** — `--required-secrets` added to `kavi propose-skill` (JSON list of env var names).
 

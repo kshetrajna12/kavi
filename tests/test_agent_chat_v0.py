@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 from pydantic import BaseModel
 
-from kavi.agent.core import CHAT_DEFAULT_ALLOWED_EFFECTS, handle_message
+from kavi.agent.constants import CHAT_DEFAULT_ALLOWED_EFFECTS
+from kavi.agent.core import handle_message
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,

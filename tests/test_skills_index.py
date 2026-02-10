@@ -61,7 +61,7 @@ class TestPolicyLabel:
         assert policy_label("SECRET_READ") == "blocked"
 
     def test_network_confirm_when_allowed(self) -> None:
-        """NETWORK in allowed set but in _CONFIRM_SIDE_EFFECTS → confirm."""
+        """NETWORK in allowed set but in CONFIRM_SIDE_EFFECTS → confirm."""
         effects = frozenset({"READ_ONLY", "FILE_WRITE", "NETWORK"})
         assert policy_label("NETWORK", effects) == "confirm"
 
