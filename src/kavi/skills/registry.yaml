@@ -19,10 +19,20 @@ skills:
   hash: 4f8532e4c903c6ba4f80f4f0962ec19e80357fcbd83a92527f1e7c5256edc65d
 - name: summarize_note
   module_path: kavi.skills.summarize_note.SummarizeNoteSkill
-  description: Summarize a markdown note from the vault via Sparkstation with graceful fallback
+  description: Summarize a markdown note from the vault via Sparkstation with graceful
+    fallback
   input_model: kavi.skills.summarize_note.SummarizeNoteInput
   output_model: kavi.skills.summarize_note.SummarizeNoteOutput
   side_effect_class: READ_ONLY
   required_secrets: []
   version: 1.0.0
   hash: d31e5d5fcf559b125c7bdbddb61600b441a92ee29c6b19a4a9ae80dca81ad62a
+- name: search_notes
+  module_path: kavi.skills.search_notes.SearchNotesSkill
+  description: Semantic search over vault notes via Sparkstation bge-large embeddings with lexical fallback
+  input_model: kavi.skills.search_notes.SearchNotesInput
+  output_model: kavi.skills.search_notes.SearchNotesOutput
+  side_effect_class: READ_ONLY
+  required_secrets: []
+  version: 1.0.0
+  hash: 09c5de80945068ee9ce9bdc1cbcc097a5049c8b67bcd0ab8f3d1db70b3accadc

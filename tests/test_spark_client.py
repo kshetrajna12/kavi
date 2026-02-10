@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from kavi.llm.spark import SparkError, SparkUnavailableError, generate, is_available
+from kavi.llm.spark import SparkError, SparkUnavailableError, embed, generate, is_available
 
 # ---------------------------------------------------------------------------
 # is_available
@@ -111,3 +111,74 @@ def test_generate_raises_spark_error_on_none_content(mock_openai_cls: MagicMock)
 
     with pytest.raises(SparkError, match="empty response"):
         generate("test prompt")
+
+
+# ---------------------------------------------------------------------------
+# embed
+# ---------------------------------------------------------------------------
+
+
+def _mock_embedding(index: int, vector: list[float]) -> MagicMock:
+    """Build a mock embedding data item."""
+    item = MagicMock()
+    item.index = index
+    item.embedding = vector
+    return item
+
+
+@patch("kavi.llm.spark.OpenAI")
+def test_embed_returns_vectors(mock_openai_cls: MagicMock) -> None:
+    mock_client = MagicMock()
+    resp = MagicMock()
+    resp.data = [
+        _mock_embedding(0, [0.1, 0.2]),
+        _mock_embedding(1, [0.3, 0.4]),
+    ]
+    mock_client.embeddings.create.return_value = resp
+    mock_openai_cls.return_value = mock_client
+
+    result = embed(["hello", "world"])
+    assert result == [[0.1, 0.2], [0.3, 0.4]]
+
+
+@patch("kavi.llm.spark.OpenAI")
+def test_embed_preserves_order(mock_openai_cls: MagicMock) -> None:
+    """Ensure results are sorted by index even if API returns them out of order."""
+    mock_client = MagicMock()
+    resp = MagicMock()
+    resp.data = [
+        _mock_embedding(1, [0.3, 0.4]),
+        _mock_embedding(0, [0.1, 0.2]),
+    ]
+    mock_client.embeddings.create.return_value = resp
+    mock_openai_cls.return_value = mock_client
+
+    result = embed(["hello", "world"])
+    assert result == [[0.1, 0.2], [0.3, 0.4]]
+
+
+def test_embed_empty_list() -> None:
+    result = embed([])
+    assert result == []
+
+
+@patch("kavi.llm.spark.OpenAI")
+def test_embed_raises_unavailable_on_error(mock_openai_cls: MagicMock) -> None:
+    mock_client = MagicMock()
+    mock_client.embeddings.create.side_effect = ConnectionError("refused")
+    mock_openai_cls.return_value = mock_client
+
+    with pytest.raises(SparkUnavailableError, match="unreachable"):
+        embed(["test"])
+
+
+@patch("kavi.llm.spark.OpenAI")
+def test_embed_raises_spark_error_on_empty_response(mock_openai_cls: MagicMock) -> None:
+    mock_client = MagicMock()
+    resp = MagicMock()
+    resp.data = []
+    mock_client.embeddings.create.return_value = resp
+    mock_openai_cls.return_value = mock_client
+
+    with pytest.raises(SparkError, match="empty embeddings"):
+        embed(["test"])

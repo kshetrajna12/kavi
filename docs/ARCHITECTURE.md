@@ -286,6 +286,7 @@ It does NOT depend on the ledger, forge, or any build infrastructure.
 | `write_note` | FILE_WRITE | Write a markdown note to the vault |
 | `read_notes_by_tag` | READ_ONLY | Find notes matching a tag |
 | `summarize_note` | READ_ONLY | Summarize a vault note via Sparkstation with graceful fallback |
+| `search_notes` | READ_ONLY | Semantic search over vault notes via bge-large embeddings with lexical fallback |
 
 ### summarize_note
 
@@ -300,6 +301,21 @@ Uses Sparkstation (local LLM gateway) at runtime with strict schema output and g
 2. Reads content as UTF-8; truncates to `max_chars` if needed.
 3. Calls `kavi.llm.spark.generate()` with a JSON-output prompt; parses response.
 4. On any Sparkstation failure (unavailable, timeout, bad JSON): deterministic fallback — first ~500 chars prefixed with `[Fallback summary]`, `key_points=[]`, `used_model="fallback"`, `error` populated.
+
+### search_notes
+
+Semantic search over vault markdown files using Sparkstation `bge-large` embeddings. First skill to exercise the D012 expanded diff allowlist — the forge built both the skill and the `embed()` infrastructure in `spark.py` in a single sandbox pass.
+
+**Input**: `query` (str), `top_k` (1–20, default 5), `max_chars` (default 12000), `timeout_s` (default 8.0), `include_snippet` (default true), `tag` (optional filter).
+
+**Output**: `query`, `results` (list of `{path, score, title, snippet}`), `truncated_paths`, `used_model` (model name or "lexical-fallback"), `error` (str | None).
+
+**Behavior**:
+1. Enumerates `vault_out/**/*.md` — skips symlinks, traversal, non-UTF-8 files. Applies optional tag filter via `#tag` heuristic.
+2. Reads each note as UTF-8; truncates to `max_chars` (records in `truncated_paths`).
+3. Calls `kavi.llm.spark.embed()` for query + all note contents; ranks by cosine similarity.
+4. On Sparkstation unavailable: deterministic lexical fallback (case-insensitive token match), `used_model="lexical-fallback"`, `error="SPARKSTATION_UNAVAILABLE"`.
+5. Returns top-k results sorted by score descending.
 
 ---
 
@@ -326,7 +342,7 @@ src/kavi/
 │   ├── db.py           # Schema, migrations (v1→v4)
 │   └── models.py       # Pydantic models + DB operations
 ├── llm/
-│   └── spark.py        # Sparkstation client
+│   └── spark.py        # Sparkstation client (generate + embed)
 ├── policies/
 │   └── scanner.py      # Policy scanner
 └── skills/
@@ -334,7 +350,8 @@ src/kavi/
     ├── loader.py       # Registry loader + trust verification
     ├── write_note.py        # Skill (FILE_WRITE)
     ├── read_notes_by_tag.py # Skill (READ_ONLY)
-    └── summarize_note.py    # Skill (READ_ONLY, Sparkstation)
+    ├── summarize_note.py    # Skill (READ_ONLY, Sparkstation)
+    └── search_notes.py      # Skill (READ_ONLY, Sparkstation embeddings)
 
 tests/
 ├── test_failure_drill.py  # Failure canon (see above)

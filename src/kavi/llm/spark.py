@@ -1,10 +1,16 @@
-"""Sparkstation client — healthcheck, bounded generation, clean errors."""
+"""Sparkstation client — healthcheck, bounded generation, embeddings, clean errors."""
 
 from __future__ import annotations
 
 from openai import OpenAI
 
-from kavi.config import SPARK_BASE_URL, SPARK_MAX_PROMPT_CHARS, SPARK_MODEL, SPARK_TIMEOUT
+from kavi.config import (
+    SPARK_BASE_URL,
+    SPARK_EMBED_MODEL,
+    SPARK_MAX_PROMPT_CHARS,
+    SPARK_MODEL,
+    SPARK_TIMEOUT,
+)
 
 
 class SparkError(Exception):
@@ -57,3 +63,32 @@ def generate(
         raise SparkError("Sparkstation returned empty response")
 
     return choice.message.content
+
+
+def embed(
+    texts: list[str],
+    *,
+    model: str = SPARK_EMBED_MODEL,
+    base_url: str = SPARK_BASE_URL,
+    timeout: float = SPARK_TIMEOUT,
+) -> list[list[float]]:
+    """Return embedding vectors for a batch of texts via Sparkstation.
+
+    Raises SparkUnavailableError if the gateway is unreachable,
+    SparkError on unexpected response issues.
+    """
+    if not texts:
+        return []
+
+    try:
+        client = OpenAI(api_key="dummy-key", base_url=base_url, timeout=timeout)
+        response = client.embeddings.create(model=model, input=texts)
+    except Exception as exc:
+        raise SparkUnavailableError(f"Sparkstation unreachable: {exc}") from exc
+
+    if not response.data:
+        raise SparkError("Sparkstation returned empty embeddings response")
+
+    # Sort by index to preserve input order
+    sorted_data = sorted(response.data, key=lambda d: d.index)
+    return [d.embedding for d in sorted_data]
