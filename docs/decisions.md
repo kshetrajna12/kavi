@@ -320,3 +320,24 @@ The skill + test files remain **required** (gate fails if missing). The runtime 
 - Parser changes: ref marker detection in both LLM and deterministic modes
 - REPL changes: session accumulation across turns
 - Single-turn CLI mode remains stateless (`session=None`)
+
+---
+
+## D016: Internal protocol canonical; external formats are boundary adapters (2026-02-10)
+
+**Status:** `CURRENT`
+
+**Context:** Phase 4 multi-turn and future external API surfaces (webhook, WhatsApp/Telegram chat client). Should Kavi adopt OpenAI's Responses API or Conversations API wire format for multi-turn support?
+
+**Decision:** Kavi's internal models (`AgentResponse`, `SessionContext`, `ParsedIntent`, `PlannedAction`, `ExecutionRecord`) remain the canonical protocol. External wire formats (OpenAI Chat Completions, Responses API, WhatsApp webhook format, etc.) are presentation concerns handled by thin adapters at the API boundary.
+
+**Rationale:**
+1. **Conceptual mismatch.** OpenAI's formats assume the LLM is the orchestrator — it decides what tool to call. Kavi's model is the opposite: LLM parses (layer 1), planner is deterministic (layer 2), execution is governed (layer 3). Adopting their format would obscure the governance semantics.
+2. **Governance features have no analog.** Confirmation gates, proposed-but-not-approved actions, deterministic planning, trust-verified execution, and provenance chains have no representation in OpenAI's wire formats. Bolting them on as non-standard extensions defeats the purpose of adopting a standard.
+3. **Version decoupling.** OpenAI's formats evolve frequently (Chat Completions → function calling → tool_choice → Responses API). Internal stability is more valuable than external compatibility.
+4. **Adapter flexibility.** A thin translation layer at the API boundary can support multiple external formats simultaneously without changing the core. The adapter is small, testable, and disposable if the external format changes.
+
+**Implication:**
+- No structural changes to `kavi.agent` models for external format compatibility
+- Future HTTP API surface will have an adapter module (e.g. `kavi.api.adapters`) that translates between internal models and client wire formats
+- The adapter is a presentation concern, not a domain concern — it lives at the edge, not in `kavi.agent`
