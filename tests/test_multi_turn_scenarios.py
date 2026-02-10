@@ -52,7 +52,7 @@ def _confirm(resp: AgentResponse, session: SessionContext) -> AgentResponse:
 
 
 class TestHappyPathScenario:
-    """10-turn happy path: search → refine → write → repeat → daily note."""
+    """10-turn happy path: search → refine → write → repeat → write again."""
 
     def test_full_scenario(self) -> None:
         session = SessionContext()

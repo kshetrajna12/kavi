@@ -678,6 +678,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                 rprint(f"  Plan: {plan_json}")
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
+                assert resp.plan is not None  # guaranteed by needs_confirmation
                 resp = execute_plan(
                     resp.plan,
                     resp.intent,

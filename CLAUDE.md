@@ -30,7 +30,7 @@ src/kavi/llm/        # Sparkstation client (spark.py)
 src/kavi/skills/     # BaseSkill ABC, loader (trust verification), skill implementations
 src/kavi/policies/   # Policy scanner (forbidden imports, eval/exec)
 src/kavi/config.py   # All path constants + Sparkstation config (SPARK_*)
-docs/decisions.md    # Append-only decision log (D001–D015)
+docs/decisions.md    # Append-only decision log (D001–D016)
 ```
 
 ## Testing

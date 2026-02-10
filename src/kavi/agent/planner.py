@@ -35,7 +35,8 @@ def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
         return _plan_write(intent)
     if isinstance(intent, SkillInvocationIntent):
         return SkillAction(skill_name=intent.skill_name, input=intent.input)
-    # HelpIntent is handled by core.py before reaching the planner.
+    # TransformIntent is resolved to SkillInvocationIntent by resolve_refs()
+    # before reaching the planner. HelpIntent is handled by core.py directly.
     # Return None defensively so the caller gets a clear signal.
     if isinstance(intent, (UnsupportedIntent, HelpIntent)):
         return None
