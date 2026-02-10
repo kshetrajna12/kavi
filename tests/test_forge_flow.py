@@ -692,3 +692,133 @@ class TestDiffAllowlistGate:
         result = diff_allowlist_gate("write_note", tmp_path)
         assert result.ok is False
         assert "No files" in result.violations[0]
+
+    # --- D012: runtime support module tests ---
+
+    def test_spark_edit_allowed(self, tmp_path: Path) -> None:
+        """Editing spark.py alongside skill files passes the gate (D012)."""
+        self._init_git_sandbox(tmp_path)
+
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "search_notes.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_search_notes.py").write_text("# test")
+
+        llm_dir = tmp_path / "src" / "kavi" / "llm"
+        llm_dir.mkdir(parents=True)
+        (llm_dir / "spark.py").write_text("# embed support")
+
+        result = diff_allowlist_gate("search_notes", tmp_path)
+        assert result.ok is True
+        assert "src/kavi/llm/spark.py" in result.allowed
+        assert result.violations == []
+
+    def test_config_edit_allowed(self, tmp_path: Path) -> None:
+        """Editing config.py alongside skill files passes the gate (D012)."""
+        self._init_git_sandbox(tmp_path)
+
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "search_notes.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_search_notes.py").write_text("# test")
+
+        config_dir = tmp_path / "src" / "kavi"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "config.py").write_text("# config")
+
+        result = diff_allowlist_gate("search_notes", tmp_path)
+        assert result.ok is True
+        assert "src/kavi/config.py" in result.allowed
+
+    def test_spark_test_edit_allowed(self, tmp_path: Path) -> None:
+        """Editing test_spark_client.py alongside skill files passes (D012)."""
+        self._init_git_sandbox(tmp_path)
+
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
+        (test_dir / "test_spark_client.py").write_text("# spark tests")
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is True
+        assert "tests/test_spark_client.py" in result.allowed
+
+    def test_forge_edit_still_fails(self, tmp_path: Path) -> None:
+        """Editing forge/ files still fails the gate (D012 does not weaken)."""
+        self._init_git_sandbox(tmp_path)
+
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
+
+        forge_dir = tmp_path / "src" / "kavi" / "forge"
+        forge_dir.mkdir(parents=True)
+        (forge_dir / "build.py").write_text("# hacked")
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is False
+        assert "src/kavi/forge/build.py" in result.violations
+
+    def test_ledger_edit_still_fails(self, tmp_path: Path) -> None:
+        """Editing ledger/ files still fails the gate."""
+        self._init_git_sandbox(tmp_path)
+
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
+
+        ledger_dir = tmp_path / "src" / "kavi" / "ledger"
+        ledger_dir.mkdir(parents=True)
+        (ledger_dir / "db.py").write_text("# hacked")
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is False
+        assert "src/kavi/ledger/db.py" in result.violations
+
+    def test_random_file_edit_fails(self, tmp_path: Path) -> None:
+        """Editing arbitrary files still fails the gate."""
+        self._init_git_sandbox(tmp_path)
+
+        skill_dir = tmp_path / "src" / "kavi" / "skills"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "write_note.py").write_text("# skill")
+
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        (test_dir / "test_skill_write_note.py").write_text("# test")
+
+        (tmp_path / "random_file.txt").write_text("# rogue")
+
+        result = diff_allowlist_gate("write_note", tmp_path)
+        assert result.ok is False
+        assert "random_file.txt" in result.violations
+
+    def test_optional_only_without_required_fails(self, tmp_path: Path) -> None:
+        """Editing only optional runtime files without skill+test fails."""
+        self._init_git_sandbox(tmp_path)
+
+        llm_dir = tmp_path / "src" / "kavi" / "llm"
+        llm_dir.mkdir(parents=True)
+        (llm_dir / "spark.py").write_text("# embed")
+
+        result = diff_allowlist_gate("search_notes", tmp_path)
+        assert result.ok is False
+        assert len(result.required_missing) == 2

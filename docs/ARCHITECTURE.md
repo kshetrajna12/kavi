@@ -38,11 +38,15 @@ Builds run in an isolated workspace, never in the canonical repo.
 1. **Copy working tree** to `/tmp/kavi-build/<build_id>/repo/`. Excludes `.git/`, `.venv/`, secrets (`.env`, `*.pem`, `*.key`, `credentials.json`), databases, caches, and special files (sockets, FIFOs).
 2. **Initialize fresh git repo** with a baseline commit. Zero hooks, zero remotes.
 3. **Invoke Claude Code** headlessly: `claude -p --output-format text --allowedTools Edit Write Glob Grep Read`. Bash is intentionally excluded. Input is the BUILD_PACKET content via stdin.
-4. **Diff allowlist gate** — `git diff --name-only HEAD` + `git ls-files --others` against the sandbox baseline. Changed files must be a strict subset of:
-   - `src/kavi/skills/{name}.py`
-   - `tests/test_skill_{name}.py`
+4. **Diff allowlist gate** — `git diff --name-only HEAD` + `git ls-files --others` against the sandbox baseline. Changed files must be a strict subset of the allowed paths. Gate fails if anything outside the allowlist changed, or if both required files are missing.
 
-   Gate fails if anything else changed, or if both required files are missing.
+   | Path | Required | Purpose |
+   |------|----------|---------|
+   | `src/kavi/skills/{name}.py` | Yes | Skill implementation |
+   | `tests/test_skill_{name}.py` | Yes | Skill tests |
+   | `src/kavi/llm/spark.py` | No | Sparkstation client (D012) |
+   | `src/kavi/config.py` | No | Configuration constants (D012) |
+   | `tests/test_spark_client.py` | No | Spark client tests (D012) |
 5. **Safe copy-back** — allowlisted files are copied to the canonical repo. Rejects symlinks, path traversal (`..`), absolute paths, and unnormalized paths. Validates resolved destination is under project root.
 
 ### Build packets
@@ -66,7 +70,7 @@ Five independent checks run via a `ToolRunner` protocol (injectable for testing)
 | mypy | `mypy` | Type checking |
 | pytest | `pytest -q --tb=short` | Unit tests |
 | policy | `policies/scanner.py` | Forbidden imports (`subprocess`, `os.system`), `eval`/`exec`, regex-based patterns from `policy.yaml` |
-| invariants | `forge/invariants.py` | Structural (AST: extends BaseSkill, required attrs, side-effect match), scope (git diff: only skill + test files), safety (`__import__()`, `importlib.import_module()`) |
+| invariants | `forge/invariants.py` | Structural (AST: extends BaseSkill, required attrs, side-effect match), scope (git diff: only skill + test + runtime support files), safety (`__import__()`, `importlib.import_module()`), runtime boundary (D012: runtime support modules must not import forge/ledger/policies) |
 
 All five must pass for status to advance to VERIFIED. A `SubprocessRunner` handles production execution; tests use a `StubRunner`.
 

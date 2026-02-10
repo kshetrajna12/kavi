@@ -27,6 +27,14 @@ from kavi.ledger.models import (
 
 _BUILDABLE = {ProposalStatus.PROPOSED, ProposalStatus.BUILT}
 
+# Runtime support modules that forge-built skills may optionally modify (D012).
+# These are allowed but NOT required — the gate passes whether or not they're touched.
+_OPTIONAL_RUNTIME_PATHS = frozenset({
+    "src/kavi/llm/spark.py",
+    "src/kavi/config.py",
+    "tests/test_spark_client.py",
+})
+
 # ---------------------------------------------------------------------------
 # Build packet generation
 # ---------------------------------------------------------------------------
@@ -71,15 +79,25 @@ Generate a Kavi skill implementation for "{name}".
 5. Do NOT use any forbidden imports (subprocess, os.system, eval, exec)
 6. Only write to allowed paths: ./vault_out/, ./artifacts_out/
 
-## File Structure
+## File Structure (required)
 ```
 src/kavi/skills/{name}.py  — skill implementation
 tests/test_skill_{name}.py — unit tests
 ```
 
+## Optional runtime support files
+If the skill requires additions to shared infrastructure (e.g. new Sparkstation
+functions like embeddings), you MAY also modify these files:
+```
+src/kavi/llm/spark.py         — Sparkstation client
+src/kavi/config.py            — configuration constants
+tests/test_spark_client.py    — Sparkstation client tests
+```
+
 ## Constraints
-- ONLY create the two files listed above.
-- Do NOT modify any other files.
+- ONLY create/modify the files listed above (required + optional).
+- Do NOT modify any other files (especially forge/, ledger/, policies/, cli.py).
+- Runtime support files must NOT import from kavi.forge, kavi.ledger, or kavi.policies.
 - Do NOT run, commit, or push anything.
 """
 
@@ -347,14 +365,17 @@ def diff_allowlist_gate(
             required_missing=[],
         )
 
-    # Allowed paths (relative to repo root, posix form)
+    # Required paths (skill + test must both be created/modified)
     skill_rel = str(skill_file_path(proposal_name, Path(".")).as_posix())
     test_rel = str(skill_test_path(proposal_name, Path(".")).as_posix())
-    allowed_set = {skill_rel, test_rel}
+    required_set = {skill_rel, test_rel}
+
+    # Full allowlist: required + optional runtime support (D012)
+    allowed_set = required_set | _OPTIONAL_RUNTIME_PATHS
 
     allowed = sorted(all_changed & allowed_set)
     violations = sorted(all_changed - allowed_set)
-    required_missing = sorted(allowed_set - all_changed)
+    required_missing = sorted(required_set - all_changed)
 
     ok = len(required_missing) == 0 and len(violations) == 0
 

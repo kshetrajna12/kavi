@@ -122,8 +122,22 @@ PROTECTED_PATHS = frozenset({
     "src/kavi/ledger/",
     "src/kavi/policies/",
     "src/kavi/cli.py",
-    "src/kavi/config.py",
     "pyproject.toml",
+})
+
+# Runtime support modules that forge builds may modify (D012).
+# These are allowed in the diff gate but must not import governance code.
+_RUNTIME_SUPPORT_MODULES = frozenset({
+    "src/kavi/llm/spark.py",
+    "src/kavi/config.py",
+    "tests/test_spark_client.py",
+})
+
+# Governance packages that runtime modules must never import.
+_FORBIDDEN_RUNTIME_IMPORTS = frozenset({
+    "kavi.forge",
+    "kavi.ledger",
+    "kavi.policies",
 })
 
 
@@ -157,6 +171,9 @@ def _check_scope(
 
     for path in changed:
         if path.startswith(expected_prefix) or path.startswith(test_prefix):
+            continue
+        # D012: allow runtime support modules
+        if path in _RUNTIME_SUPPORT_MODULES:
             continue
         for protected in PROTECTED_PATHS:
             if path.startswith(protected):
@@ -210,6 +227,56 @@ def _check_extended_safety(skill_file: Path) -> list[InvariantViolation]:
     return violations
 
 
+# --- Check 4: Runtime import boundary (D012) ---
+
+
+def _check_runtime_imports(project_root: Path) -> list[InvariantViolation]:
+    """Verify runtime support modules do not import governance code.
+
+    Parses each runtime support module with AST and rejects any import
+    from kavi.forge, kavi.ledger, or kavi.policies.
+    """
+    violations: list[InvariantViolation] = []
+
+    for rel_path in _RUNTIME_SUPPORT_MODULES:
+        module_path = project_root / rel_path
+        if not module_path.exists():
+            continue
+
+        source = module_path.read_text()
+        try:
+            tree = ast.parse(source, filename=str(module_path))
+        except SyntaxError:
+            continue  # Caught by other checks
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    for forbidden in _FORBIDDEN_RUNTIME_IMPORTS:
+                        if alias.name == forbidden or alias.name.startswith(forbidden + "."):
+                            violations.append(InvariantViolation(
+                                check="runtime_boundary",
+                                message=(
+                                    f"{rel_path} imports {alias.name} "
+                                    f"(governance code)"
+                                ),
+                                line=node.lineno,
+                            ))
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                for forbidden in _FORBIDDEN_RUNTIME_IMPORTS:
+                    if node.module == forbidden or node.module.startswith(forbidden + "."):
+                        violations.append(InvariantViolation(
+                            check="runtime_boundary",
+                            message=(
+                                f"{rel_path} imports from {node.module} "
+                                f"(governance code)"
+                            ),
+                            line=node.lineno,
+                        ))
+
+    return violations
+
+
 # --- Top-level orchestrator ---
 
 
@@ -224,15 +291,20 @@ def check_invariants(
     structural_violations = _check_structural(skill_file, expected_side_effect)
     scope_violations = _check_scope(proposal_name, project_root)
     safety_violations = _check_extended_safety(skill_file)
+    runtime_violations = _check_runtime_imports(project_root)
 
     structural_ok = len(structural_violations) == 0
     scope_ok = len(scope_violations) == 0
     safety_ok = len(safety_violations) == 0
+    runtime_ok = len(runtime_violations) == 0
 
     return InvariantResult(
-        ok=structural_ok and scope_ok and safety_ok,
+        ok=structural_ok and scope_ok and safety_ok and runtime_ok,
         structural_ok=structural_ok,
         scope_ok=scope_ok,
         safety_ok=safety_ok,
-        violations=structural_violations + scope_violations + safety_violations,
+        violations=(
+            structural_violations + scope_violations
+            + safety_violations + runtime_violations
+        ),
     )

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from kavi.forge.invariants import (
     _check_extended_safety,
+    _check_runtime_imports,
     _check_structural,
     check_invariants,
 )
@@ -147,6 +148,89 @@ class TestExtendedSafety:
         f.write_text(CLEAN_CODE)
         violations = _check_extended_safety(f)
         assert violations == []
+
+
+# --- Top-level orchestrator ---
+
+
+# --- Runtime import boundary tests (D012) ---
+
+
+class TestRuntimeImportBoundary:
+    """Ensure runtime support modules do not import governance code."""
+
+    def _setup_runtime_module(self, tmp_path: Path, rel_path: str, code: str) -> Path:
+        f = tmp_path / rel_path
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(code)
+        return f
+
+    def test_clean_spark_passes(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/llm/spark.py",
+            "from openai import OpenAI\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert violations == []
+
+    def test_spark_importing_forge_fails(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/llm/spark.py",
+            "from kavi.forge.build import build_skill\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert len(violations) == 1
+        assert "kavi.forge" in violations[0].message
+        assert violations[0].check == "runtime_boundary"
+
+    def test_spark_importing_ledger_fails(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/llm/spark.py",
+            "import kavi.ledger.db\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert len(violations) == 1
+        assert "kavi.ledger" in violations[0].message
+
+    def test_spark_importing_policies_fails(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/llm/spark.py",
+            "from kavi.policies.scanner import scan_file\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert len(violations) == 1
+        assert "kavi.policies" in violations[0].message
+
+    def test_config_importing_forge_fails(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/config.py",
+            "from kavi.forge import propose\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert len(violations) == 1
+        assert "kavi.forge" in violations[0].message
+
+    def test_clean_config_passes(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/config.py",
+            "from pathlib import Path\nVAULT = Path('vault_out')\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert violations == []
+
+    def test_missing_module_skipped(self, tmp_path: Path) -> None:
+        """Non-existent runtime modules are silently skipped."""
+        violations = _check_runtime_imports(tmp_path)
+        assert violations == []
+
+    def test_multiple_violations_reported(self, tmp_path: Path) -> None:
+        self._setup_runtime_module(
+            tmp_path, "src/kavi/llm/spark.py",
+            "from kavi.forge.build import build_skill\n"
+            "from kavi.ledger.models import get_proposal\n",
+        )
+        violations = _check_runtime_imports(tmp_path)
+        assert len(violations) == 2
 
 
 # --- Top-level orchestrator ---

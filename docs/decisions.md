@@ -217,3 +217,38 @@ propose → build_1 (fail, stays PROPOSED) → research → build_2 → ... → 
 - CLI: `kavi research-skill <build_id> [--hint] [--advise/--no-advise]`
 
 ---
+
+## D012: Expanded diff allowlist for runtime support modules (2026-02-09)
+
+**Status:** `CURRENT`
+
+**Context:** Skills increasingly need shared runtime infrastructure. `summarize_note` uses `kavi.llm.spark.generate()` which existed before the skill was forged. But `search_notes` needs `embed()` which doesn't exist yet. The forge's diff allowlist (D009) only permits `src/kavi/skills/{name}.py` and `tests/test_skill_{name}.py`, so the sandbox build cannot add the embedding function to `spark.py`. This forces manual edits outside the forge, breaking the "no manual code edits" principle.
+
+**Decision:** Expand the diff allowlist to include a tight set of runtime support modules:
+
+| Path | Required | Purpose |
+|------|----------|---------|
+| `src/kavi/skills/{name}.py` | Yes | Skill implementation |
+| `tests/test_skill_{name}.py` | Yes | Skill tests |
+| `src/kavi/llm/spark.py` | No | Sparkstation client (embeddings, generation) |
+| `src/kavi/config.py` | No | Path constants, model config |
+| `tests/test_spark_client.py` | No | Spark client tests |
+
+The skill + test files remain **required** (gate fails if missing). The runtime support modules are **optional** (gate passes whether or not they're touched).
+
+**Boundary enforcement:** To prevent runtime modules from reaching into governance code, a new invariant check verifies that any modified runtime support module does NOT import from `kavi.forge`, `kavi.ledger`, or `kavi.policies`. This keeps the runtime layer clean and prevents privilege escalation.
+
+**Non-goals:**
+- No edits to `forge/`, `ledger/`, `policies/`, CLI core (`cli.py`), or `pyproject.toml`
+- No arbitrary file additions — only the enumerated paths
+- No weakening of existing safety gates (policy scanner, structural invariants, extended safety)
+
+**Rationale:** The forge should be the only path for code changes. Allowing a small, enumerated set of runtime support modules keeps the "no manual edits" rule intact while enabling skills that need shared infrastructure. The import boundary invariant prevents governance-layer contamination.
+
+**Implication:**
+- `diff_allowlist_gate()` updated with optional allowed paths
+- `_check_scope()` in invariants updated to match
+- New `_check_runtime_imports()` invariant added
+- Build packet template updated to inform Claude Code about optional files
+
+---
