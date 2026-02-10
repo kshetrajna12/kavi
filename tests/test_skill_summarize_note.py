@@ -246,8 +246,7 @@ class TestFallback:
         assert result.summary.startswith("[Fallback summary] ")
         assert "Some note content for fallback." in result.summary
         assert result.key_points == []
-        assert result.error is not None
-        assert "SparkUnavailableError" in result.error
+        assert result.error == "SPARKSTATION_UNAVAILABLE"
 
     @patch("kavi.skills.summarize_note.generate")
     def test_spark_error_fallback(self, mock_gen: MagicMock, tmp_path: Path) -> None:
@@ -260,8 +259,7 @@ class TestFallback:
         result = skill.execute(SummarizeNoteInput(path="note.md"))
 
         assert result.used_model == "fallback"
-        assert result.error is not None
-        assert "SparkError" in result.error
+        assert result.error == "SPARKSTATION_ERROR"
 
     @patch("kavi.skills.summarize_note.generate")
     def test_json_parse_error_fallback(self, mock_gen: MagicMock, tmp_path: Path) -> None:
@@ -272,8 +270,7 @@ class TestFallback:
         result = skill.execute(SummarizeNoteInput(path="note.md"))
 
         assert result.used_model == "fallback"
-        assert result.error is not None
-        assert "JSONDecodeError" in result.error
+        assert result.error == "SPARKSTATION_BAD_JSON"
 
     @patch("kavi.skills.summarize_note.generate")
     def test_missing_key_fallback(self, mock_gen: MagicMock, tmp_path: Path) -> None:
@@ -284,7 +281,7 @@ class TestFallback:
         result = skill.execute(SummarizeNoteInput(path="note.md"))
 
         assert result.used_model == "fallback"
-        assert "KeyError" in result.error  # type: ignore[operator]
+        assert result.error == "SPARKSTATION_BAD_SCHEMA"
 
     @patch("kavi.skills.summarize_note.generate")
     def test_fallback_truncates_long_content(self, mock_gen: MagicMock, tmp_path: Path) -> None:

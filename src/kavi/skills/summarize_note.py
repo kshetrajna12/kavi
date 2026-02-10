@@ -15,6 +15,15 @@ VAULT_OUT = Path("vault_out")
 _FALLBACK_PREFIX = "[Fallback summary] "
 _FALLBACK_CHARS = 500
 
+# Classified error codes — short, greppable, stable across log entries.
+_ERROR_CODES: dict[type, str] = {
+    SparkUnavailableError: "SPARKSTATION_UNAVAILABLE",
+    SparkError: "SPARKSTATION_ERROR",
+    json.JSONDecodeError: "SPARKSTATION_BAD_JSON",
+    KeyError: "SPARKSTATION_BAD_SCHEMA",
+    TypeError: "SPARKSTATION_BAD_SCHEMA",
+}
+
 
 class SummarizeNoteInput(SkillInput):
     """Input for summarize_note skill."""
@@ -98,11 +107,20 @@ class SummarizeNoteSkill(BaseSkill):
             SparkUnavailableError, SparkError, json.JSONDecodeError, KeyError, TypeError,
         ) as exc:
             fallback_text = content[:_FALLBACK_CHARS]
+            code = _ERROR_CODES.get(type(exc))
+            if code is None:
+                # Walk MRO for subclass matches (e.g. SparkUnavailableError → SparkError)
+                for cls, c in _ERROR_CODES.items():
+                    if isinstance(exc, cls):
+                        code = c
+                        break
+                else:
+                    code = "SPARKSTATION_UNKNOWN"
             return SummarizeNoteOutput(
                 path=path_str,
                 summary=f"{_FALLBACK_PREFIX}{fallback_text}",
                 key_points=[],
                 truncated=truncated,
                 used_model="fallback",
-                error=f"{type(exc).__name__}: {exc}",
+                error=code,
             )
