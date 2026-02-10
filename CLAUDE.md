@@ -2,6 +2,15 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Project Overview
+
+Kavi is a governed skill forge: propose → build → verify → promote → run. See `README.md` for full architecture. Key concepts:
+
+- **Ledger** (SQLite, schema v4) is the single source of truth (D002)
+- **Sandbox builds** (D009): Claude Code runs in `/tmp/kavi-build/`, diff allowlist gate
+- **Research/retry** (D011): deterministic classifier + optional LLM advisory via Sparkstation
+- **Trust chain** (D010): hash verified at runtime via `load_skill()`
+
 ## Quick Reference
 
 ```bash
@@ -11,6 +20,30 @@ bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
 bd sync               # Sync with git
 ```
+
+## Key Directories
+
+```
+src/kavi/forge/      # Pipeline stages (propose, build, verify, promote, research)
+src/kavi/ledger/     # SQLite schema + Pydantic models + DB ops
+src/kavi/llm/        # Sparkstation client (spark.py)
+src/kavi/skills/     # BaseSkill ABC, loader (trust verification), skill implementations
+src/kavi/policies/   # Policy scanner (forbidden imports, eval/exec)
+src/kavi/config.py   # All path constants + Sparkstation config (SPARK_*)
+docs/decisions.md    # Append-only decision log (D001–D011)
+```
+
+## Testing
+
+```bash
+uv run pytest -q                  # Fast suite (~3s, 116+ tests, no network)
+uv run pytest -m slow             # Integration tests (real subprocesses)
+uv run pytest -m spark            # Live Sparkstation tests (requires gateway)
+uv run ruff check src/ tests/     # Lint
+uv run mypy                       # Type check
+```
+
+Three markers: unmarked (default, CI-safe), `slow` (excluded by default), `spark` (excluded by default).
 
 ## Landing the Plane (Session Completion)
 
@@ -37,8 +70,6 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
-
-
 
 ### Hand-off Prompt (Step 7)
 
@@ -68,20 +99,18 @@ This ensures continuity across sessions without losing context.
 - Check current state:
   - `git status`
   - `git pull --rebase` (if appropriate)
-- Run tests to establish baseline (pick the fastest meaningful suite):
-  - `pytest -q` (or `uv run pytest -q` if using uv)
+- Run tests to establish baseline:
+  - `uv run pytest -q`
 - Skim recent changes if continuing work:
   - `git log -n 10 --oneline`
 
 ## Session End
 - If code changed:
-  - Run formatting + lint + tests
+  - `uv run ruff check --fix src/ tests/` + `uv run pytest -q`
   - Ensure no debug prints, no stray TODOs without context
-- Commit with a tight message (see “Commit Preferences”)
-- Push:
-  - `git push`
-- Verify:
-  - `git status` should be clean
+- Commit with a tight message (see "Commit Preferences")
+- Push: `git push`
+- Verify: `git status` should be clean
 
 ## Commit Preferences
 - Do NOT include "Co-Authored-By: Claude" or "Generated with Claude Code"
@@ -101,10 +130,11 @@ This ensures continuity across sessions without losing context.
 
 | If you changed... | Update... |
 |-------------------|-----------|
-| CLI commands | `README.md` (usage examples) |
+| CLI commands | `README.md` (usage examples, CLI table) |
 | Database schema | `docs/decisions.md` (if schema choice changed) |
-| Architecture/data flow | `docs/decisions.md` |
+| Architecture/data flow | `docs/decisions.md` + `README.md` (architecture section) |
 | Design decisions | `docs/decisions.md` |
+| New modules/packages | `README.md` (project layout) |
 
 Documentation updates are part of completing work, not a separate task.
 
