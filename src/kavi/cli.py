@@ -312,9 +312,33 @@ def promote_skill_cmd(
     rprint(f"  Registry updated: {REGISTRY_PATH}")
 
 
+@app.command("skills")
+def skills_cmd(
+    output_json: bool = typer.Option(
+        False, "--json", help="Output as JSON instead of formatted text",
+    ),
+) -> None:
+    """Show available skills with chat policy labels and example usage."""
+    from kavi.agent.skills_index import build_index, format_index
+    from kavi.config import REGISTRY_PATH
+    from kavi.consumer.shim import get_trusted_skills
+
+    skills = get_trusted_skills(REGISTRY_PATH)
+    if not skills:
+        typer.echo("No trusted skills registered.")
+        return
+
+    index = build_index(skills)
+
+    if output_json:
+        typer.echo(json.dumps([e.model_dump() for e in index], indent=2))
+    else:
+        rprint(format_index(index))
+
+
 @app.command("list-skills")
 def list_skills_cmd() -> None:
-    """List all TRUSTED skills from the registry."""
+    """List all TRUSTED skills from the registry (raw view)."""
     from kavi.config import REGISTRY_PATH
     from kavi.skills.loader import list_skills
 
