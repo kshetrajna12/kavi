@@ -92,7 +92,7 @@ kavi run-skill write_note --json '{"title": "Hello", "body": "World"}'
 | `kavi replay --execution-id <id>` | [Re-run a past execution](docs/ARCHITECTURE.md#execution-replay) with trust checks, emit new linked record |
 | `kavi session --execution-id <id>` / `--latest` | [Inspect an execution chain](docs/ARCHITECTURE.md#session-inspection) as a human-readable tree |
 | `kavi chat -m "..."` | Single-turn [chat](docs/ARCHITECTURE.md#chat-v0): parse intent, plan, execute, return AgentResponse JSON |
-| `kavi chat` | Interactive REPL with confirmation flow for FILE_WRITE skills. `search!` prefix shows top snippet |
+| `kavi chat` | Interactive REPL with confirmation flow for FILE_WRITE/NETWORK/SECRET_READ skills. `search!` prefix shows top snippet |
 | `kavi list-skills` | List TRUSTED skills |
 | `kavi research-skill <build_id>` | Analyze a failed build |
 | `kavi doctor [--json]` | Healthcheck: paths, registry integrity, Sparkstation, toolchain, log sanity |
@@ -115,13 +115,13 @@ src/kavi/
 
 docs/
 ├── ARCHITECTURE.md     # Internal architecture reference
-└── decisions.md        # Append-only decision log (D001–D012)
+└── decisions.md        # Append-only decision log (D001–D013)
 ```
 
 ## Development
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, no network)
+uv run pytest -q              # Fast suite (~3s, 430 tests, no network)
 uv run ruff check src/ tests/ # Lint
 uv run mypy                   # Type check
 ```
