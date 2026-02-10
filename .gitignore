@@ -211,3 +211,8 @@ vault_out/
 artifacts_out/
 *.db
 *.db-journal
+
+# Claude Code — agent/skill definitions are checked in,
+# but runtime state and local settings are not.
+.claude/agent-memory/
+.claude/settings.local.json
