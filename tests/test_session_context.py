@@ -89,11 +89,11 @@ class TestExtractAnchorData:
         assert data["summary"] == "A summary."
         assert "key_points" not in data
 
-    def test_write_note_extracts_written_path(self) -> None:
+    def test_write_note_extracts_scalars(self) -> None:
         output = {"written_path": "vault/test.md", "title": "Test"}
         data = _extract_anchor_data("write_note", output)
         assert data["written_path"] == "vault/test.md"
-        assert "title" not in data
+        assert data["title"] == "Test"
 
     def test_unknown_skill_takes_scalars(self) -> None:
         output = {"a": 1, "b": "hello", "c": [1, 2]}

@@ -24,39 +24,24 @@ class Anchor(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
-# Curated data extractors per skill — keeps anchors small and useful.
-_ANCHOR_EXTRACTORS: dict[str, list[str]] = {
-    "search_notes": ["query"],
-    "summarize_note": ["path", "summary"],
-    "write_note": ["written_path"],
-    "read_notes_by_tag": ["tag", "count"],
-    "http_get_json": ["url"],
-    "create_daily_note": ["path", "date"],
-}
-
-
 def _extract_anchor_data(skill_name: str, output: dict[str, Any]) -> dict[str, Any]:
-    """Extract curated subset of output for an anchor."""
-    keys = _ANCHOR_EXTRACTORS.get(skill_name)
-    if keys is None:
-        # Unknown skill — take top-level scalar fields (up to 5)
-        result: dict[str, Any] = {}
-        for k, v in output.items():
-            if isinstance(v, (str, int, float, bool)) and len(result) < 5:
-                result[k] = v
-        return result
-    data: dict[str, Any] = {}
-    for key in keys:
-        if key in output:
-            data[key] = output[key]
-    # Special case: search_notes top result path
+    """Extract top-level scalar fields from skill output for an anchor.
+
+    Takes up to 5 scalar (str/int/float/bool) fields from the output dict.
+    No per-skill curation needed — new skills work automatically.
+    """
+    result: dict[str, Any] = {}
+    for k, v in output.items():
+        if isinstance(v, (str, int, float, bool)) and len(result) < 5:
+            result[k] = v
+    # Special case: search_notes top result path (for ref resolution)
     if skill_name == "search_notes":
         results = output.get("results", [])
         if results and isinstance(results, list) and len(results) > 0:
             top = results[0]
             if isinstance(top, dict) and "path" in top:
-                data["top_result_path"] = top["path"]
-    return data
+                result["top_result_path"] = top["path"]
+    return result
 
 
 class SessionContext(BaseModel):
