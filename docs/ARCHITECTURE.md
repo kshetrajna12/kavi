@@ -132,6 +132,7 @@ Local LLM gateway at `http://localhost:8000/v1` (OpenAI-compatible API). Client 
 |----------|---------|
 | `is_available()` | Healthcheck via `client.models.list()`. Returns bool. |
 | `generate()` | Chat completion. Truncates prompt to `SPARK_MAX_PROMPT_CHARS`, enforces `SPARK_TIMEOUT`. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
+| `embed()` | Batch text embeddings. Returns `list[list[float]]`, sorted by index. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
 
 Configuration in `kavi.config`:
 
@@ -139,6 +140,7 @@ Configuration in `kavi.config`:
 |----------|---------|---------|
 | `SPARK_BASE_URL` | `http://localhost:8000/v1` | Gateway endpoint |
 | `SPARK_MODEL` | `gpt-oss-20b` | Default model for advisory |
+| `SPARK_EMBED_MODEL` | `bge-large` | Default model for embeddings |
 | `SPARK_TIMEOUT` | 30s | Request timeout |
 | `SPARK_MAX_PROMPT_CHARS` | 8000 | Input truncation bound |
 
@@ -175,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 116+ tests, no network)
+uv run pytest -q              # Fast suite (~3s, 248 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -358,5 +360,5 @@ tests/
 └── ...                    # See test markers above
 docs/
 ├── ARCHITECTURE.md     # This file
-└── decisions.md        # Append-only decision log (D001–D011)
+└── decisions.md        # Append-only decision log (D001–D012)
 ```
