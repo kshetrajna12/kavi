@@ -529,39 +529,58 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
             rprint("Bye.")
             return
 
-        # Multi-line input for write commands
-        message = line
-        if line.lower().startswith("write"):
+        resp = handle_message(
+            line,
+            registry_path=registry_path,
+            log_path=log_path,
+        )
+
+        # If write_note with empty body, prompt for body before confirming
+        if (
+            resp.needs_confirmation
+            and hasattr(resp.intent, "kind")
+            and resp.intent.kind == "write_note"
+            and hasattr(resp.intent, "body")
+            and not resp.intent.body
+        ):
             try:
-                rprint("[dim](enter body, then blank line to finish)[/dim]")
-                body_lines = []
+                rprint(
+                    f"\n[bold]Title:[/bold] {resp.intent.title}"
+                )
+                rprint("[dim](enter body, blank line to finish)[/dim]")
+                body_lines: list[str] = []
                 while True:
                     body_line = input("  ... ")
                     if not body_line.strip():
                         break
                     body_lines.append(body_line)
-                if body_lines:
-                    message = line + "\n" + "\n".join(body_lines)
+                if not body_lines:
+                    rprint("[dim]No body entered, cancelled.[/dim]\n")
+                    continue
+                body = "\n".join(body_lines)
+                message = f"write {resp.intent.title}\n{body}"
+                resp = handle_message(
+                    message,
+                    registry_path=registry_path,
+                    log_path=log_path,
+                )
             except (EOFError, KeyboardInterrupt):
                 rprint("\nBye.")
                 return
-
-        resp = handle_message(
-            message,
-            registry_path=registry_path,
-            log_path=log_path,
-        )
 
         # Handle confirmation flow for FILE_WRITE skills
         if resp.needs_confirmation:
             rprint("\n[yellow]Action requires confirmation:[/yellow]")
             rprint(f"  Intent: {resp.intent.kind}")
             if resp.plan is not None:
-                rprint(f"  Plan: {json.dumps(resp.plan.model_dump(), indent=4)}")
+                plan_json = json.dumps(
+                    resp.plan.model_dump(), indent=4,
+                )
+                rprint(f"  Plan: {plan_json}")
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
                 resp = handle_message(
-                    message,
+                    line,
                     registry_path=registry_path,
                     log_path=log_path,
                     confirmed=True,
