@@ -56,12 +56,23 @@ class SearchNotesOutput(SkillOutput):
 # ---------------------------------------------------------------------------
 
 
-def _extract_title(content: str) -> str | None:
-    """Return the first H1 heading, or None."""
-    for line in content.splitlines():
+def extract_title(md_text: str) -> str | None:
+    """Return the first Markdown H1 heading as a single-line string, or None.
+
+    Rules:
+    - Looks for the first line starting with ``# `` (after stripping leading
+      whitespace).
+    - Strips the ``# `` prefix and surrounding whitespace.
+    - Returns ``None`` if no H1 exists or the extracted text is empty.
+    - Guaranteed single-line: ``\\n`` / ``\\r`` are never in the result.
+    """
+    for line in md_text.splitlines():
         stripped = line.strip()
         if stripped.startswith("# "):
-            return stripped[2:].strip()
+            title = stripped[2:].strip()
+            # Enforce single-line — should already be one line, but guard
+            title = title.replace("\r", "").replace("\n", "")
+            return title if title else None
     return None
 
 
@@ -158,7 +169,7 @@ def _enumerate_notes(
             content = content[:max_chars]
             truncated.append(str(rel))
 
-        title = _extract_title(content)
+        title = extract_title(content)
         entries.append((str(rel), content, title))
 
     return entries, truncated

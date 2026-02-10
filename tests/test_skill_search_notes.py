@@ -15,10 +15,10 @@ from kavi.skills.search_notes import (
     SearchNotesSkill,
     SearchResult,
     _cosine_similarity,
-    _extract_title,
     _has_tag,
     _lexical_score,
     _snippet,
+    extract_title,
 )
 
 
@@ -127,10 +127,31 @@ class TestSearchNotesAttributes:
 
 class TestHelpers:
     def test_extract_title_with_h1(self) -> None:
-        assert _extract_title("# My Title\n\nBody") == "My Title"
+        assert extract_title("# My Title\n\nBody") == "My Title"
+
+    def test_extract_title_meeting_notes(self) -> None:
+        note = "# Meeting Notes\n\nDiscussed roadmap.\n- Item 1\n- Item 2"
+        assert extract_title(note) == "Meeting Notes"
 
     def test_extract_title_none(self) -> None:
-        assert _extract_title("No heading here") is None
+        assert extract_title("No heading here") is None
+
+    def test_extract_title_none_for_h2(self) -> None:
+        assert extract_title("## Not an H1\n\nBody") is None
+
+    def test_extract_title_empty_heading(self) -> None:
+        assert extract_title("# \n\nBody text") is None
+
+    def test_extract_title_never_contains_newline(self) -> None:
+        # Regression: title must be single-line even if content is weird
+        assert extract_title("# Clean Title\nBody") == "Clean Title"
+        result = extract_title("# Title")
+        assert result is not None
+        assert "\n" not in result
+        assert "\r" not in result
+
+    def test_extract_title_leading_whitespace(self) -> None:
+        assert extract_title("  # Indented Heading\n\nBody") == "Indented Heading"
 
     def test_has_tag_present(self) -> None:
         assert _has_tag("Some text #work here", "work") is True
