@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import ExitStack
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from kavi.agent.models import (
     ParsedIntent,
     SearchAndSummarizeIntent,
     SkillAction,
+    SkillInvocationIntent,
     SummarizeNoteIntent,
     UnsupportedIntent,
     WriteNoteIntent,
@@ -62,6 +64,27 @@ class SummarizeOutput(SkillOutput):
     error: str | None = None
 
 
+class ReadByTagInput(SkillInput):
+    tag: str
+
+
+class ReadByTagOutput(SkillOutput):
+    notes: list[dict[str, str]]
+    count: int
+
+
+class HttpGetInput(SkillInput):
+    url: str
+    allowed_hosts: list[str]
+
+
+class HttpGetOutput(SkillOutput):
+    url: str
+    status_code: int = 200
+    data: dict[str, Any] | None = None
+    error: str | None = None
+
+
 class WriteInput(SkillInput):
     path: str
     title: str
@@ -71,6 +94,36 @@ class WriteInput(SkillInput):
 class WriteOutput(SkillOutput):
     written_path: str
     title: str
+
+
+class ReadByTagSkill(BaseSkill):
+    name = "read_notes_by_tag"
+    description = "Read notes by tag"
+    input_model = ReadByTagInput
+    output_model = ReadByTagOutput
+    side_effect_class = "READ_ONLY"
+
+    def execute(self, input_data: BaseModel) -> BaseModel:
+        assert isinstance(input_data, ReadByTagInput)
+        return ReadByTagOutput(
+            notes=[{"path": "notes/cooking.md", "title": "Cooking"}],
+            count=1,
+        )
+
+
+class HttpGetSkill(BaseSkill):
+    name = "http_get_json"
+    description = "Fetch JSON from URL"
+    input_model = HttpGetInput
+    output_model = HttpGetOutput
+    side_effect_class = "NETWORK"
+
+    def execute(self, input_data: BaseModel) -> BaseModel:
+        assert isinstance(input_data, HttpGetInput)
+        return HttpGetOutput(
+            url=input_data.url,
+            data={"result": "ok"},
+        )
 
 
 class SearchSkill(BaseSkill):
@@ -153,6 +206,22 @@ ENTRIES = [
         "hash": "ccc",
         "module_path": "fake.WriteSkill",
     },
+    {
+        "name": "read_notes_by_tag",
+        "description": "Read notes by tag",
+        "side_effect_class": "READ_ONLY",
+        "version": "1.0.0",
+        "hash": "ddd",
+        "module_path": "fake.ReadByTagSkill",
+    },
+    {
+        "name": "http_get_json",
+        "description": "Fetch JSON from URL",
+        "side_effect_class": "NETWORK",
+        "version": "1.0.0",
+        "hash": "eee",
+        "module_path": "fake.HttpGetSkill",
+    },
 ]
 
 
@@ -181,6 +250,14 @@ SKILL_INFOS = [
         "write_note", "Write note", "FILE_WRITE",
         "ccc", WriteInput, WriteOutput,
     ),
+    _make_info(
+        "read_notes_by_tag", "Read notes by tag", "READ_ONLY",
+        "ddd", ReadByTagInput, ReadByTagOutput,
+    ),
+    _make_info(
+        "http_get_json", "Fetch JSON from URL", "NETWORK",
+        "eee", HttpGetInput, HttpGetOutput,
+    ),
 ]
 
 FAKE_REGISTRY = Path("/fake/registry.yaml")
@@ -191,6 +268,8 @@ def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
         "search_notes": SearchSkill,
         "summarize_note": SummarizeSkill,
         "write_note": WriteSkill,
+        "read_notes_by_tag": ReadByTagSkill,
+        "http_get_json": HttpGetSkill,
     }
     if name in skills:
         return skills[name]()
@@ -407,6 +486,94 @@ class TestParserDeterministic:
         assert isinstance(intent, SummarizeNoteIntent)
 
 
+class TestParserSkillInvocation:
+    """Tests for the generic SkillInvocationIntent path."""
+
+    def test_llm_returns_skill_invocation(self) -> None:
+        resp = {
+            "kind": "skill_invocation",
+            "skill_name": "read_notes_by_tag",
+            "input": {"tag": "cooking"},
+        }
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, _ = parse_intent(
+                "show me notes tagged cooking", SKILL_INFOS,
+            )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "read_notes_by_tag"
+        assert intent.input == {"tag": "cooking"}
+
+    def test_llm_returns_http_get_json(self) -> None:
+        resp = {
+            "kind": "skill_invocation",
+            "skill_name": "http_get_json",
+            "input": {
+                "url": "https://api.example.com/data",
+                "allowed_hosts": ["api.example.com"],
+            },
+        }
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, _ = parse_intent(
+                "fetch https://api.example.com/data", SKILL_INFOS,
+            )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "http_get_json"
+
+    def test_deterministic_tags_prefix(self) -> None:
+        intent, _ = parse_intent(
+            "tags cooking", SKILL_INFOS, mode="deterministic",
+        )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "read_notes_by_tag"
+        assert intent.input == {"tag": "cooking"}
+
+    def test_deterministic_tag_singular(self) -> None:
+        intent, _ = parse_intent(
+            "tag recipes", SKILL_INFOS, mode="deterministic",
+        )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "read_notes_by_tag"
+        assert intent.input == {"tag": "recipes"}
+
+    def test_deterministic_fetch_prefix(self) -> None:
+        intent, _ = parse_intent(
+            "fetch https://api.example.com/data", SKILL_INFOS,
+            mode="deterministic",
+        )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "http_get_json"
+        assert intent.input["url"] == "https://api.example.com/data"
+        assert intent.input["allowed_hosts"] == ["api.example.com"]
+
+    def test_deterministic_generic_skill_name(self) -> None:
+        """Typing a skill name directly works for non-custom skills."""
+        intent, _ = parse_intent(
+            'read_notes_by_tag {"tag": "ml"}', SKILL_INFOS,
+            mode="deterministic",
+        )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "read_notes_by_tag"
+        assert intent.input == {"tag": "ml"}
+
+    def test_deterministic_generic_skill_non_json(self) -> None:
+        """Non-JSON rest goes into {"query": rest}."""
+        intent, _ = parse_intent(
+            "read_notes_by_tag cooking", SKILL_INFOS,
+            mode="deterministic",
+        )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input == {"query": "cooking"}
+
+    def test_unsupported_lists_extra_skills(self) -> None:
+        """Help text includes non-custom skill names."""
+        intent, _ = parse_intent(
+            "do something weird", SKILL_INFOS, mode="deterministic",
+        )
+        assert isinstance(intent, UnsupportedIntent)
+        assert "http_get_json" in intent.message
+        assert "read_notes_by_tag" in intent.message
+
+
 # ── Planner tests ────────────────────────────────────────────────────
 
 
@@ -433,6 +600,15 @@ class TestPlanner:
         assert plan.skill_name == "write_note"
         assert plan.input["title"] == "Test"
         assert plan.input["path"] == "Inbox/AI/Test.md"
+
+    def test_skill_invocation_produces_skill_action(self) -> None:
+        intent = SkillInvocationIntent(
+            skill_name="read_notes_by_tag", input={"tag": "ml"},
+        )
+        plan = intent_to_plan(intent)
+        assert isinstance(plan, SkillAction)
+        assert plan.skill_name == "read_notes_by_tag"
+        assert plan.input == {"tag": "ml"}
 
     def test_unsupported_returns_none(self) -> None:
         intent = UnsupportedIntent(message="nope")
@@ -575,6 +751,64 @@ class TestHandleMessage:
                 "summarize a.md", registry_path=FAKE_REGISTRY,
             )
         assert resp.warnings == []
+
+    def test_read_notes_by_tag_auto_executes(self) -> None:
+        """READ_ONLY skill invocation executes without confirmation."""
+        llm = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "read_notes_by_tag",
+            "input": {"tag": "cooking"},
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "notes tagged cooking", registry_path=FAKE_REGISTRY,
+            )
+        assert isinstance(resp.intent, SkillInvocationIntent)
+        assert isinstance(resp.plan, SkillAction)
+        assert resp.needs_confirmation is False
+        assert len(resp.records) == 1
+        assert resp.records[0].success
+        assert resp.records[0].output_json["count"] == 1
+
+    def test_http_get_json_needs_confirmation(self) -> None:
+        """NETWORK skill invocation requires confirmation."""
+        llm = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "http_get_json",
+            "input": {
+                "url": "https://api.example.com/data",
+                "allowed_hosts": ["api.example.com"],
+            },
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "fetch https://api.example.com/data",
+                registry_path=FAKE_REGISTRY,
+            )
+        assert isinstance(resp.intent, SkillInvocationIntent)
+        assert resp.needs_confirmation is True
+        assert resp.records == []
+
+    def test_http_get_json_confirmed_executes(self) -> None:
+        """NETWORK skill executes when confirmed=True."""
+        llm = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "http_get_json",
+            "input": {
+                "url": "https://api.example.com/data",
+                "allowed_hosts": ["api.example.com"],
+            },
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "fetch https://api.example.com/data",
+                registry_path=FAKE_REGISTRY,
+                confirmed=True,
+            )
+        assert resp.needs_confirmation is False
+        assert len(resp.records) == 1
+        assert resp.records[0].success
+        assert resp.records[0].output_json["data"] == {"result": "ok"}
 
 
 class TestHandleMessageFallback:

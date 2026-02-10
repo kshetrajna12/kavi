@@ -31,6 +31,14 @@ class WriteNoteIntent(BaseModel):
     body: str
 
 
+class SkillInvocationIntent(BaseModel):
+    """Generic intent for any registered skill — no custom wiring needed."""
+
+    kind: Literal["skill_invocation"] = "skill_invocation"
+    skill_name: str
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
 class UnsupportedIntent(BaseModel):
     kind: Literal["unsupported"] = "unsupported"
     message: str
@@ -40,6 +48,7 @@ ParsedIntent = (
     SearchAndSummarizeIntent
     | SummarizeNoteIntent
     | WriteNoteIntent
+    | SkillInvocationIntent
     | UnsupportedIntent
 )
 

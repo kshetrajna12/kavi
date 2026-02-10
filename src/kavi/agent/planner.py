@@ -8,6 +8,7 @@ from kavi.agent.models import (
     PlannedAction,
     SearchAndSummarizeIntent,
     SkillAction,
+    SkillInvocationIntent,
     SummarizeNoteIntent,
     UnsupportedIntent,
     WriteNoteIntent,
@@ -33,6 +34,8 @@ def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
         return _plan_summarize(intent)
     if isinstance(intent, WriteNoteIntent):
         return _plan_write(intent)
+    if isinstance(intent, SkillInvocationIntent):
+        return SkillAction(skill_name=intent.skill_name, input=intent.input)
     if isinstance(intent, UnsupportedIntent):
         return None
     return None
