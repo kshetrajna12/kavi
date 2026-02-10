@@ -211,6 +211,7 @@ def build_skill(
 
     artifact = write_build_packet(
         conn, content=content, build_id=build.id, output_dir=output_dir,
+        proposal_id=build.proposal_id,
     )
 
     return build, artifact

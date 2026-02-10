@@ -215,6 +215,7 @@ class TestFullForgeFlow:
         )
         assert build.branch_name.startswith("skill/write_note-")
         assert Path(packet.path).exists()
+        assert packet.related_id == proposal.id
         content = Path(packet.path).read_text()
         assert "Build Packet" in content
         assert "write_note" in content
