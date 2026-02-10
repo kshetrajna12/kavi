@@ -12,6 +12,7 @@ from kavi.agent.models import (
     AmbiguityResponse,
     Anchor,
     ParsedIntent,
+    SearchAndSummarizeIntent,
     SessionContext,
     SkillInvocationIntent,
     note_path_for_title,
@@ -34,6 +35,19 @@ def _anchor_value(anchor: Anchor) -> str | None:
         if isinstance(v, str):
             return v
     return None
+
+
+# For search refs, prefer query/summary over path fields.
+_SEARCH_VALUE_FIELDS = ("query", "summary")
+
+
+def _search_anchor_value(anchor: Anchor) -> str | None:
+    """Extract a search-friendly value from an anchor's data."""
+    for field in _SEARCH_VALUE_FIELDS:
+        val = anchor.data.get(field)
+        if val is not None:
+            return str(val)
+    return _anchor_value(anchor)
 
 
 def _input_fields_for(
@@ -140,6 +154,24 @@ def resolve_refs(
                 input schema. When None, all anchor data is copied.
     """
     if session is None:
+        return intent
+
+    # SearchAndSummarizeIntent: resolve ref: in query field
+    if isinstance(intent, SearchAndSummarizeIntent) and intent.query.startswith("ref:"):
+        ref = intent.query[4:]
+        anchor = session.resolve(ref)
+        if anchor is None:
+            return AmbiguityResponse(
+                ref=ref,
+                candidates=[],
+                message=f"Could not resolve '{ref}' — no prior results "
+                "to reference. Try running a command first.",
+            )
+        value = _search_anchor_value(anchor)
+        if value is not None:
+            return SearchAndSummarizeIntent(
+                query=value, top_k=intent.top_k, style=intent.style,
+            )
         return intent
 
     if not isinstance(intent, SkillInvocationIntent):

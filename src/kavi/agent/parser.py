@@ -222,6 +222,18 @@ _WRITE_REF = re.compile(
     re.IGNORECASE,
 )
 
+# "search/find for that" / "search for it" / "find that"
+_SEARCH_REF = re.compile(
+    r"^(?:search|find)\s+(?:(?:notes?\s+)?(?:about|for|on)\s+)?(?:that|it|the\s+result|this)$",
+    re.IGNORECASE,
+)
+
+# "search again" / "find again"
+_SEARCH_AGAIN = re.compile(
+    r"^(?:search|find)\s+again$",
+    re.IGNORECASE,
+)
+
 # "again" or "do it again" with optional style override
 _AGAIN_REF = re.compile(
     r"^(?:do\s+it\s+)?again(?:\s+(paragraph|bullet))?$",
@@ -253,6 +265,14 @@ def _detect_ref_pattern(msg: str, lower: str) -> ParsedIntent | None:
                 "body": "ref:last_body",
             },
         )
+
+    m = _SEARCH_REF.match(lower)
+    if m:
+        return SearchAndSummarizeIntent(query="ref:last")
+
+    m = _SEARCH_AGAIN.match(lower)
+    if m:
+        return SearchAndSummarizeIntent(query="ref:last_search")
 
     m = _AGAIN_REF.match(lower)
     if m:
