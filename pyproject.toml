@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "rich>=13.0",
+    "openai>=1.0",
 ]
 
 [project.scripts]
@@ -23,9 +24,10 @@ packages = ["src/kavi"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-m 'not slow'"
+addopts = "-m 'not slow and not spark'"
 markers = [
     "slow: marks tests that run real subprocesses (deselected by default, run with -m slow)",
+    "spark: marks tests requiring live Sparkstation (deselected by default, run with -m spark)",
 ]
 
 [tool.ruff]

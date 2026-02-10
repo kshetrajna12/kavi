@@ -22,3 +22,9 @@ REGISTRY_PATH = SKILLS_DIR / "registry.yaml"
 
 # Policy config
 POLICY_PATH = Path(__file__).parent / "policies" / "policy.yaml"
+
+# Sparkstation (local LLM gateway)
+SPARK_BASE_URL = "http://localhost:8000/v1"
+SPARK_MODEL = "gpt-oss-20b"
+SPARK_TIMEOUT = 30  # seconds
+SPARK_MAX_PROMPT_CHARS = 8000  # bound input before sending
