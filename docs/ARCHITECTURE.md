@@ -528,6 +528,7 @@ When Sparkstation is unavailable or returns unparseable JSON, the parser falls b
 - `summarize that/it/the result` → `SkillInvocationIntent` with `ref:last` (D015)
 - `write <title>\n<body>` → `WriteNoteIntent`
 - `write that [to a note]` → `SkillInvocationIntent(write_note)` with `ref:last` (D015)
+- `daily <content>` / `add to daily: <content>` → `SkillInvocationIntent(create_daily_note)`
 - `but paragraph`/`make it bullet`/`no, paragraph` → `TransformIntent` with style override
 - `try X.md instead`/`no, X.md` → `TransformIntent` with path override
 - `again [paragraph]` / `do it again` → re-run with `ref:last` (D015)

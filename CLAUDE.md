@@ -36,7 +36,7 @@ docs/decisions.md    # Append-only decision log (D001–D016)
 ## Testing
 
 ```bash
-uv run pytest -q                  # Fast suite (~3s, 619 tests, no network)
+uv run pytest -q                  # Fast suite (~3s, 624 tests, no network)
 uv run pytest -m slow             # Integration tests (real subprocesses)
 uv run pytest -m spark            # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/     # Lint
