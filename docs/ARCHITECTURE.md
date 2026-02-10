@@ -275,6 +275,30 @@ It does NOT depend on the ledger, forge, or any build infrastructure.
 
 ---
 
+## Shipped skills
+
+| Skill | Side Effect | Description |
+|-------|-------------|-------------|
+| `write_note` | FILE_WRITE | Write a markdown note to the vault |
+| `read_notes_by_tag` | READ_ONLY | Find notes matching a tag |
+| `summarize_note` | READ_ONLY | Summarize a vault note via Sparkstation with graceful fallback |
+
+### summarize_note
+
+Uses Sparkstation (local LLM gateway) at runtime with strict schema output and graceful fallback.
+
+**Input**: `path` (vault-relative), `style` ("bullet" | "paragraph"), `max_chars` (default 12000), `timeout_s` (default 12.0).
+
+**Output**: `path`, `summary`, `key_points` (list[str]), `truncated` (bool), `used_model` (model name or "fallback"), `error` (str | None).
+
+**Behavior**:
+1. Validates path is within `vault_out/` — rejects traversal, absolute paths, symlinks, non-existent files.
+2. Reads content as UTF-8; truncates to `max_chars` if needed.
+3. Calls `kavi.llm.spark.generate()` with a JSON-output prompt; parses response.
+4. On any Sparkstation failure (unavailable, timeout, bad JSON): deterministic fallback — first ~500 chars prefixed with `[Fallback summary]`, `key_points=[]`, `used_model="fallback"`, `error` populated.
+
+---
+
 ## Project layout
 
 ```
@@ -305,7 +329,8 @@ src/kavi/
     ├── base.py         # BaseSkill ABC
     ├── loader.py       # Registry loader + trust verification
     ├── write_note.py        # Skill (FILE_WRITE)
-    └── read_notes_by_tag.py # Skill (READ_ONLY)
+    ├── read_notes_by_tag.py # Skill (READ_ONLY)
+    └── summarize_note.py    # Skill (READ_ONLY, Sparkstation)
 
 tests/
 ├── test_failure_drill.py  # Failure canon (see above)

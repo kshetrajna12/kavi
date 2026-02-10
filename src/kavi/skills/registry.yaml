@@ -17,3 +17,12 @@ skills:
   required_secrets: []
   version: 1.0.0
   hash: 4f8532e4c903c6ba4f80f4f0962ec19e80357fcbd83a92527f1e7c5256edc65d
+- name: summarize_note
+  module_path: kavi.skills.summarize_note.SummarizeNoteSkill
+  description: Summarize a markdown note from the vault via Sparkstation with graceful fallback
+  input_model: kavi.skills.summarize_note.SummarizeNoteInput
+  output_model: kavi.skills.summarize_note.SummarizeNoteOutput
+  side_effect_class: READ_ONLY
+  required_secrets: []
+  version: 1.0.0
+  hash: 94dccfc361aefe009ac2c4403888127e6ab10345235acbd9011d75a1ca01912b
