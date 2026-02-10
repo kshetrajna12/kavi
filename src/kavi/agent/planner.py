@@ -9,7 +9,6 @@ from kavi.agent.models import (
     SearchAndSummarizeIntent,
     SkillAction,
     SkillInvocationIntent,
-    SummarizeNoteIntent,
     UnsupportedIntent,
     WriteNoteIntent,
 )
@@ -30,8 +29,6 @@ def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
     """
     if isinstance(intent, SearchAndSummarizeIntent):
         return _plan_search_and_summarize(intent)
-    if isinstance(intent, SummarizeNoteIntent):
-        return _plan_summarize(intent)
     if isinstance(intent, WriteNoteIntent):
         return _plan_write(intent)
     if isinstance(intent, SkillInvocationIntent):
@@ -60,13 +57,6 @@ def _plan_search_and_summarize(intent: SearchAndSummarizeIntent) -> ChainAction:
     )
     assert len(spec.steps) <= MAX_CHAIN_STEPS
     return ChainAction(chain=spec)
-
-
-def _plan_summarize(intent: SummarizeNoteIntent) -> SkillAction:
-    return SkillAction(
-        skill_name="summarize_note",
-        input={"path": intent.path, "style": intent.style},
-    )
 
 
 def _plan_write(intent: WriteNoteIntent) -> SkillAction:

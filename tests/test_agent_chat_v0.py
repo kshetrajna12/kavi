@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from pydantic import BaseModel
 
-from kavi.agent.core import handle_message
+from kavi.agent.core import CHAT_DEFAULT_ALLOWED_EFFECTS, handle_message
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
@@ -18,7 +18,6 @@ from kavi.agent.models import (
     SearchAndSummarizeIntent,
     SkillAction,
     SkillInvocationIntent,
-    SummarizeNoteIntent,
     UnsupportedIntent,
     WriteNoteIntent,
 )
@@ -262,6 +261,9 @@ SKILL_INFOS = [
 
 FAKE_REGISTRY = Path("/fake/registry.yaml")
 
+# Allowed effects including NETWORK — for tests that need it
+_ALL_EFFECTS = frozenset({"READ_ONLY", "FILE_WRITE", "NETWORK", "SECRET_READ"})
+
 
 def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
     skills = {
@@ -335,14 +337,16 @@ class TestParserLLMSuccess:
         assert intent.top_k == 3
         assert warnings == []
 
-    def test_summarize_note(self) -> None:
+    def test_summarize_note_backward_compat(self) -> None:
+        """LLM returning summarize_note kind → SkillInvocationIntent."""
         resp = {"kind": "summarize_note", "path": "notes/ml.md"}
         with patch(_GEN, return_value=json.dumps(resp)):
             intent, _ = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
-        assert isinstance(intent, SummarizeNoteIntent)
-        assert intent.path == "notes/ml.md"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
+        assert intent.input["path"] == "notes/ml.md"
 
     def test_write_note(self) -> None:
         resp = {
@@ -367,6 +371,7 @@ class TestParserLLMSuccess:
         assert isinstance(intent, UnsupportedIntent)
 
     def test_llm_returns_markdown_fenced_json(self) -> None:
+        """LLM returning summarize_note in fences → SkillInvocationIntent."""
         raw = (
             '```json\n'
             '{"kind": "summarize_note", "path": "a.md"}\n'
@@ -376,8 +381,9 @@ class TestParserLLMSuccess:
             intent, _ = parse_intent(
                 "summarize a.md", SKILL_INFOS,
             )
-        assert isinstance(intent, SummarizeNoteIntent)
-        assert intent.path == "a.md"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
+        assert intent.input["path"] == "a.md"
 
     def test_llm_warnings_propagated(self) -> None:
         """LLM returns warnings for trailing intents."""
@@ -417,13 +423,14 @@ class TestParserDeterministic:
 
     def test_summarize_path(self) -> None:
         intent = self._parse("summarize notes/ml.md")
-        assert isinstance(intent, SummarizeNoteIntent)
-        assert intent.path == "notes/ml.md"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
+        assert intent.input["path"] == "notes/ml.md"
 
     def test_summarize_with_paragraph(self) -> None:
         intent = self._parse("summarize notes/ml.md paragraph")
-        assert isinstance(intent, SummarizeNoteIntent)
-        assert intent.style == "paragraph"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["style"] == "paragraph"
 
     def test_write_note(self) -> None:
         intent = self._parse("write My Title\nBody here")
@@ -475,7 +482,9 @@ class TestParserDeterministic:
             intent, warnings = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
-        assert isinstance(intent, SummarizeNoteIntent)
+        # Falls back to deterministic → SkillInvocationIntent
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
         assert warnings == []
 
     def test_llm_bad_json_triggers_fallback(self) -> None:
@@ -483,7 +492,8 @@ class TestParserDeterministic:
             intent, _ = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
-        assert isinstance(intent, SummarizeNoteIntent)
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
 
 
 class TestParserSkillInvocation:
@@ -514,39 +524,13 @@ class TestParserSkillInvocation:
         }
         with patch(_GEN, return_value=json.dumps(resp)):
             intent, _ = parse_intent(
-                "fetch https://api.example.com/data", SKILL_INFOS,
+                "get data from api.example.com", SKILL_INFOS,
             )
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "http_get_json"
 
-    def test_deterministic_tags_prefix(self) -> None:
-        intent, _ = parse_intent(
-            "tags cooking", SKILL_INFOS, mode="deterministic",
-        )
-        assert isinstance(intent, SkillInvocationIntent)
-        assert intent.skill_name == "read_notes_by_tag"
-        assert intent.input == {"tag": "cooking"}
-
-    def test_deterministic_tag_singular(self) -> None:
-        intent, _ = parse_intent(
-            "tag recipes", SKILL_INFOS, mode="deterministic",
-        )
-        assert isinstance(intent, SkillInvocationIntent)
-        assert intent.skill_name == "read_notes_by_tag"
-        assert intent.input == {"tag": "recipes"}
-
-    def test_deterministic_fetch_prefix(self) -> None:
-        intent, _ = parse_intent(
-            "fetch https://api.example.com/data", SKILL_INFOS,
-            mode="deterministic",
-        )
-        assert isinstance(intent, SkillInvocationIntent)
-        assert intent.skill_name == "http_get_json"
-        assert intent.input["url"] == "https://api.example.com/data"
-        assert intent.input["allowed_hosts"] == ["api.example.com"]
-
-    def test_deterministic_generic_skill_name(self) -> None:
-        """Typing a skill name directly works for non-custom skills."""
+    def test_deterministic_generic_skill_name_json(self) -> None:
+        """Typing a skill name + JSON works."""
         intent, _ = parse_intent(
             'read_notes_by_tag {"tag": "ml"}', SKILL_INFOS,
             mode="deterministic",
@@ -564,8 +548,20 @@ class TestParserSkillInvocation:
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.input == {"query": "cooking"}
 
-    def test_unsupported_lists_extra_skills(self) -> None:
-        """Help text includes non-custom skill names."""
+    def test_deterministic_http_get_json_explicit(self) -> None:
+        """http_get_json requires explicit skill_name + JSON form."""
+        intent, _ = parse_intent(
+            'http_get_json {"url": "https://api.example.com", '
+            '"allowed_hosts": ["api.example.com"]}',
+            SKILL_INFOS,
+            mode="deterministic",
+        )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "http_get_json"
+        assert intent.input["url"] == "https://api.example.com"
+
+    def test_unsupported_lists_all_skills(self) -> None:
+        """Help text includes all skill names."""
         intent, _ = parse_intent(
             "do something weird", SKILL_INFOS, mode="deterministic",
         )
@@ -586,8 +582,12 @@ class TestPlanner:
         assert plan.chain.steps[0].skill_name == "search_notes"
         assert plan.chain.steps[1].skill_name == "summarize_note"
 
-    def test_summarize_produces_skill_action(self) -> None:
-        intent = SummarizeNoteIntent(path="notes/ml.md")
+    def test_summarize_via_skill_invocation(self) -> None:
+        """summarize_note goes through SkillInvocationIntent now."""
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note",
+            input={"path": "notes/ml.md", "style": "bullet"},
+        )
         plan = intent_to_plan(intent)
         assert isinstance(plan, SkillAction)
         assert plan.skill_name == "summarize_note"
@@ -644,6 +644,7 @@ class TestHandleMessage:
         assert not resp.needs_confirmation
 
     def test_summarize_happy_path(self) -> None:
+        """summarize_note via backward-compat → SkillInvocationIntent."""
         llm = json.dumps({
             "kind": "summarize_note", "path": "notes/ml.md",
         })
@@ -652,7 +653,7 @@ class TestHandleMessage:
                 "summarize notes/ml.md",
                 registry_path=FAKE_REGISTRY,
             )
-        assert isinstance(resp.intent, SummarizeNoteIntent)
+        assert isinstance(resp.intent, SkillInvocationIntent)
         assert isinstance(resp.plan, SkillAction)
         assert len(resp.records) == 1
         assert resp.records[0].success
@@ -721,7 +722,7 @@ class TestHandleMessage:
                 "summarize a.md", registry_path=FAKE_REGISTRY,
             )
         data = json.loads(resp.model_dump_json())
-        assert data["intent"]["kind"] == "summarize_note"
+        assert data["intent"]["kind"] == "skill_invocation"
         assert data["plan"]["kind"] == "skill"
         assert len(data["records"]) == 1
         assert data["warnings"] == []
@@ -770,8 +771,15 @@ class TestHandleMessage:
         assert resp.records[0].success
         assert resp.records[0].output_json["count"] == 1
 
-    def test_http_get_json_needs_confirmation(self) -> None:
-        """NETWORK skill invocation requires confirmation."""
+
+# ── Chat policy tests ────────────────────────────────────────────────
+
+
+class TestChatPolicy:
+    """Chat policy gates skills by side_effect_class."""
+
+    def test_network_blocked_by_default(self) -> None:
+        """NETWORK skills are blocked under default chat policy."""
         llm = json.dumps({
             "kind": "skill_invocation",
             "skill_name": "http_get_json",
@@ -782,33 +790,70 @@ class TestHandleMessage:
         })
         with _ctx(llm_return=llm):
             resp = handle_message(
-                "fetch https://api.example.com/data",
+                "get data from api",
                 registry_path=FAKE_REGISTRY,
             )
-        assert isinstance(resp.intent, SkillInvocationIntent)
+        assert resp.error is not None
+        assert "chat policy" in resp.error
+        assert "NETWORK" in resp.error
+        assert resp.records == []
+
+    def test_network_allowed_with_explicit_effects(self) -> None:
+        """NETWORK skill works when allowed_effects includes NETWORK."""
+        llm = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "http_get_json",
+            "input": {
+                "url": "https://api.example.com/data",
+                "allowed_hosts": ["api.example.com"],
+            },
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "get data from api",
+                registry_path=FAKE_REGISTRY,
+                confirmed=True,
+                allowed_effects=_ALL_EFFECTS,
+            )
+        assert resp.error is None
+        assert len(resp.records) == 1
+        assert resp.records[0].success
+
+    def test_network_still_needs_confirmation(self) -> None:
+        """Even with allowed_effects, NETWORK needs confirmation."""
+        llm = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "http_get_json",
+            "input": {
+                "url": "https://api.example.com/data",
+                "allowed_hosts": ["api.example.com"],
+            },
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "get data from api",
+                registry_path=FAKE_REGISTRY,
+                confirmed=False,
+                allowed_effects=_ALL_EFFECTS,
+            )
         assert resp.needs_confirmation is True
         assert resp.records == []
 
-    def test_http_get_json_confirmed_executes(self) -> None:
-        """NETWORK skill executes when confirmed=True."""
-        llm = json.dumps({
-            "kind": "skill_invocation",
-            "skill_name": "http_get_json",
-            "input": {
-                "url": "https://api.example.com/data",
-                "allowed_hosts": ["api.example.com"],
-            },
-        })
-        with _ctx(llm_return=llm):
-            resp = handle_message(
-                "fetch https://api.example.com/data",
-                registry_path=FAKE_REGISTRY,
-                confirmed=True,
-            )
-        assert resp.needs_confirmation is False
-        assert len(resp.records) == 1
-        assert resp.records[0].success
-        assert resp.records[0].output_json["data"] == {"result": "ok"}
+    def test_read_only_allowed_by_default(self) -> None:
+        """READ_ONLY is in default allowed effects."""
+        assert "READ_ONLY" in CHAT_DEFAULT_ALLOWED_EFFECTS
+
+    def test_file_write_allowed_by_default(self) -> None:
+        """FILE_WRITE is in default allowed effects."""
+        assert "FILE_WRITE" in CHAT_DEFAULT_ALLOWED_EFFECTS
+
+    def test_network_not_in_default_allowed(self) -> None:
+        """NETWORK is NOT in default allowed effects."""
+        assert "NETWORK" not in CHAT_DEFAULT_ALLOWED_EFFECTS
+
+    def test_secret_read_not_in_default_allowed(self) -> None:
+        """SECRET_READ is NOT in default allowed effects."""
+        assert "SECRET_READ" not in CHAT_DEFAULT_ALLOWED_EFFECTS
 
 
 class TestHandleMessageFallback:
@@ -823,7 +868,7 @@ class TestHandleMessageFallback:
                 "summarize notes/ml.md",
                 registry_path=FAKE_REGISTRY,
             )
-        assert isinstance(resp.intent, SummarizeNoteIntent)
+        assert isinstance(resp.intent, SkillInvocationIntent)
         assert len(resp.records) == 1
         assert resp.records[0].success
 
@@ -884,7 +929,7 @@ class TestDeterministicParseMode:
                 registry_path=FAKE_REGISTRY,
                 parse_mode="deterministic",
             )
-        assert isinstance(resp.intent, SummarizeNoteIntent)
+        assert isinstance(resp.intent, SkillInvocationIntent)
         assert len(resp.records) == 1
 
     def test_write_empty_body_needs_confirmation(self) -> None:

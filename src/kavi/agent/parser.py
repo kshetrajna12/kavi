@@ -17,40 +17,32 @@ from kavi.agent.models import (
     ParsedIntent,
     SearchAndSummarizeIntent,
     SkillInvocationIntent,
-    SummarizeNoteIntent,
     UnsupportedIntent,
     WriteNoteIntent,
 )
 from kavi.consumer.shim import SkillInfo
 from kavi.llm.spark import SparkUnavailableError, generate
 
-# Intents with custom wiring — everything else goes through SkillInvocationIntent
-_CUSTOM_INTENT_SKILLS = {"search_notes", "summarize_note", "write_note"}
-
 _SYSTEM_PROMPT_HEADER = """\
 You are an intent parser for a personal assistant with access to skills.
 Given a user message, extract ONE intent as strict JSON matching one of \
 these schemas:
 
-1. Search and summarize notes:
+1. Search and summarize notes (2-step chain: search → summarize):
    {"kind": "search_and_summarize", "query": "<terms>",
     "top_k": <int>, "style": "bullet"|"paragraph",
     "warnings": ["..."]}
 
-2. Summarize a specific note:
-   {"kind": "summarize_note", "path": "<file path>",
-    "style": "bullet"|"paragraph", "warnings": ["..."]}
-
-3. Write a new note:
+2. Write a new note:
    {"kind": "write_note", "title": "<note title>",
     "body": "<note content>", "warnings": ["..."]}
 
-4. Invoke a specific skill (for any skill not covered above):
+3. Invoke a specific skill:
    {"kind": "skill_invocation", "skill_name": "<name>",
     "input": {<matching the skill's input schema>},
     "warnings": ["..."]}
 
-5. Anything else:
+4. Anything else:
    {"kind": "unsupported",
     "message": "<explain what is supported>",
     "warnings": ["..."]}
@@ -58,11 +50,12 @@ these schemas:
 Rules:
 - Output ONLY valid JSON, no markdown fences, no extra text.
 - top_k defaults to 5, style defaults to "bullet" if not specified.
-- If the user mentions a .md file path, use summarize_note.
 - If the user wants to find/search notes, use search_and_summarize.
 - If the user wants to write/create a note, use write_note.
+- If the user mentions a specific .md file path to summarize, use \
+skill_invocation with skill_name "summarize_note".
 - For any other skill, use skill_invocation with the correct skill_name \
-and input fields.
+and input fields matching the skill's input schema.
 - Each message maps to EXACTLY ONE intent. Pick the best-fitting one.
 - If the message requests multiple actions, pick the primary intent and \
 add a warning for each ignored action.
@@ -127,22 +120,27 @@ def _deterministic_parse(
 ) -> ParsedIntent:
     """Deterministic heuristic parser — requires explicit command prefixes.
 
-    Recognized prefixes: summarize, write, search, find, tags, fetch,
-    and any registered skill name.
+    Recognized prefixes:
+    - summarize <path> [paragraph]  → SkillInvocationIntent(summarize_note)
+    - write <title>\\n<body>         → WriteNoteIntent
+    - search/find <query>           → SearchAndSummarizeIntent
+    - <skill_name> <json>           → SkillInvocationIntent (generic)
+
     Anything else returns UnsupportedIntent with help text.
     """
     msg = message.strip()
     lower = msg.lower()
 
-    # "summarize <path>" [paragraph]
+    # "summarize <path>" [paragraph] → sugar for summarize_note skill
     if lower.startswith("summarize "):
         rest = msg[len("summarize "):].strip()
         path = rest.split()[0] if rest.split() else rest
-        style: Literal["bullet", "paragraph"] = "bullet"
-        if "paragraph" in lower:
-            style = "paragraph"
+        style = "paragraph" if "paragraph" in lower else "bullet"
         if path:
-            return SummarizeNoteIntent(path=path, style=style)
+            return SkillInvocationIntent(
+                skill_name="summarize_note",
+                input={"path": path, "style": style},
+            )
 
     # "write <title>\n<body>" or "write note: <title>\n<body>"
     write_match = re.match(
@@ -168,29 +166,7 @@ def _deterministic_parse(
         if query:
             return SearchAndSummarizeIntent(query=query)
 
-    # "tags <tag>" → read_notes_by_tag
-    tags_match = re.match(r"^tags?\s+(.+)$", msg, re.IGNORECASE)
-    if tags_match:
-        tag = tags_match.group(1).strip()
-        if tag and _has_skill("read_notes_by_tag", skills):
-            return SkillInvocationIntent(
-                skill_name="read_notes_by_tag", input={"tag": tag},
-            )
-
-    # "fetch <url>" → http_get_json
-    fetch_match = re.match(r"^fetch\s+(https?://\S+)$", msg, re.IGNORECASE)
-    if fetch_match:
-        url = fetch_match.group(1).strip()
-        if _has_skill("http_get_json", skills):
-            from urllib.parse import urlparse
-
-            host = urlparse(url).hostname or ""
-            return SkillInvocationIntent(
-                skill_name="http_get_json",
-                input={"url": url, "allowed_hosts": [host]},
-            )
-
-    # Generic: "<skill_name> <json>" for any registered skill
+    # Generic: "<skill_name> <json_or_args>" for any registered skill
     first_word = lower.split()[0] if lower.split() else ""
     skill_match = _find_skill_by_name(first_word, skills)
     if skill_match is not None:
@@ -208,16 +184,12 @@ def _deterministic_parse(
     )
 
 
-def _has_skill(name: str, skills: list[SkillInfo]) -> bool:
-    return any(s.name == name for s in skills)
-
-
 def _find_skill_by_name(
     name: str, skills: list[SkillInfo],
 ) -> SkillInfo | None:
-    """Match a token against registered skill names (excluding custom-wired ones)."""
+    """Match a token against registered skill names."""
     for s in skills:
-        if s.name == name and s.name not in _CUSTOM_INTENT_SKILLS:
+        if s.name == name:
             return s
     return None
 
@@ -236,11 +208,11 @@ def _parse_generic_input(rest: str) -> dict[str, Any]:
 
 
 def _available_skill_commands(skills: list[SkillInfo]) -> str:
-    """Build help text listing non-custom skills."""
-    extra = [s.name for s in skills if s.name not in _CUSTOM_INTENT_SKILLS]
-    if not extra:
+    """Build help text listing skills available via generic invocation."""
+    names = [s.name for s in skills]
+    if not names:
         return ""
-    return ", " + ", ".join(f"{n} <input>" for n in sorted(extra))
+    return ", " + ", ".join(f"{n} <input>" for n in sorted(names))
 
 
 # ── LLM helpers ──────────────────────────────────────────────────────
@@ -295,12 +267,16 @@ def _dict_to_intent(data: dict) -> ParsedIntent:
     kind = data.get("kind")
     if kind == "search_and_summarize":
         return SearchAndSummarizeIntent(**data)
-    if kind == "summarize_note":
-        return SummarizeNoteIntent(**data)
     if kind == "write_note":
         return WriteNoteIntent(**data)
     if kind == "skill_invocation":
         return SkillInvocationIntent(**data)
+    # Backward compat: LLM may still emit summarize_note → convert
+    if kind == "summarize_note":
+        return SkillInvocationIntent(
+            skill_name="summarize_note",
+            input={k: v for k, v in data.items() if k != "kind"},
+        )
     return UnsupportedIntent(
         message=data.get("message", "Could not determine intent."),
     )

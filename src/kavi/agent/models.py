@@ -19,12 +19,6 @@ class SearchAndSummarizeIntent(BaseModel):
     style: Literal["bullet", "paragraph"] = "bullet"
 
 
-class SummarizeNoteIntent(BaseModel):
-    kind: Literal["summarize_note"] = "summarize_note"
-    path: str
-    style: Literal["bullet", "paragraph"] = "bullet"
-
-
 class WriteNoteIntent(BaseModel):
     kind: Literal["write_note"] = "write_note"
     title: str
@@ -46,7 +40,6 @@ class UnsupportedIntent(BaseModel):
 
 ParsedIntent = (
     SearchAndSummarizeIntent
-    | SummarizeNoteIntent
     | WriteNoteIntent
     | SkillInvocationIntent
     | UnsupportedIntent
