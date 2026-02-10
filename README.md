@@ -116,13 +116,13 @@ src/kavi/
 
 docs/
 ├── ARCHITECTURE.md     # Internal architecture reference
-└── decisions.md        # Append-only decision log (D001–D013)
+└── decisions.md        # Append-only decision log (D001–D015)
 ```
 
 ## Development
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 505 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 560 tests, no network)
 uv run ruff check src/ tests/ # Lint
 uv run mypy                   # Type check
 ```

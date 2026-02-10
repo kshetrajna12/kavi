@@ -30,13 +30,13 @@ src/kavi/llm/        # Sparkstation client (spark.py)
 src/kavi/skills/     # BaseSkill ABC, loader (trust verification), skill implementations
 src/kavi/policies/   # Policy scanner (forbidden imports, eval/exec)
 src/kavi/config.py   # All path constants + Sparkstation config (SPARK_*)
-docs/decisions.md    # Append-only decision log (D001–D013)
+docs/decisions.md    # Append-only decision log (D001–D015)
 ```
 
 ## Testing
 
 ```bash
-uv run pytest -q                  # Fast suite (~3s, 505 tests, no network)
+uv run pytest -q                  # Fast suite (~3s, 560 tests, no network)
 uv run pytest -m slow             # Integration tests (real subprocesses)
 uv run pytest -m spark            # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/     # Lint
