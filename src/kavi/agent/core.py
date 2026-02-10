@@ -13,6 +13,7 @@ from typing import Literal
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
+    HelpIntent,
     SkillAction,
     UnsupportedIntent,
     WriteNoteIntent,
@@ -82,6 +83,17 @@ def handle_message(
     if isinstance(intent, UnsupportedIntent):
         return AgentResponse(
             intent=intent, warnings=warnings, error=intent.message,
+        )
+
+    # 3b. Help — return skills index, no planning needed
+    if isinstance(intent, HelpIntent):
+        from kavi.agent.skills_index import build_index, format_index
+
+        index = build_index(skills, allowed_effects)
+        return AgentResponse(
+            intent=intent,
+            warnings=warnings,
+            help_text=format_index(index),
         )
 
     # 4. Plan

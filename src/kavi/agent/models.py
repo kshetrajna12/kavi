@@ -33,6 +33,10 @@ class SkillInvocationIntent(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class HelpIntent(BaseModel):
+    kind: Literal["help"] = "help"
+
+
 class UnsupportedIntent(BaseModel):
     kind: Literal["unsupported"] = "unsupported"
     message: str
@@ -42,6 +46,7 @@ ParsedIntent = (
     SearchAndSummarizeIntent
     | WriteNoteIntent
     | SkillInvocationIntent
+    | HelpIntent
     | UnsupportedIntent
 )
 
@@ -79,4 +84,5 @@ class AgentResponse(BaseModel):
     records: list[ExecutionRecord] = Field(default_factory=list)
     needs_confirmation: bool = False
     warnings: list[str] = Field(default_factory=list)
+    help_text: str | None = None
     error: str | None = None

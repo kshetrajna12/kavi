@@ -590,7 +590,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
     from kavi.agent.core import handle_message
 
     rprint("[bold]Kavi Chat v0[/bold] — type 'quit' or Ctrl-D to exit")
-    rprint("Commands: search <query>, summarize <path>, write <title>\n")
+    rprint("Commands: help, search <query>, summarize <path>, write <title>\n")
 
     while True:
         try:
@@ -682,6 +682,10 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
             rprint(f"[yellow]Warning:[/yellow] {w}")
 
         # Pretty-print results
+        if resp.help_text:
+            rprint(resp.help_text)
+            rprint("")
+            continue
         if resp.error:
             rprint(f"[red]Error:[/red] {resp.error}")
         elif resp.records:

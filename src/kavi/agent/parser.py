@@ -14,6 +14,7 @@ import re
 from typing import Any, Literal, NamedTuple
 
 from kavi.agent.models import (
+    HelpIntent,
     ParsedIntent,
     SearchAndSummarizeIntent,
     SkillInvocationIntent,
@@ -42,7 +43,10 @@ these schemas:
     "input": {<matching the skill's input schema>},
     "warnings": ["..."]}
 
-4. Anything else:
+4. Help / list skills / capabilities:
+   {"kind": "help", "warnings": ["..."]}
+
+5. Anything else:
    {"kind": "unsupported",
     "message": "<explain what is supported>",
     "warnings": ["..."]}
@@ -131,6 +135,10 @@ def _deterministic_parse(
     msg = message.strip()
     lower = msg.lower()
 
+    # help / skills / what can you do
+    if _is_help_request(lower):
+        return HelpIntent()
+
     # "summarize <path>" [paragraph] → sugar for summarize_note skill
     if lower.startswith("summarize "):
         rest = msg[len("summarize "):].strip()
@@ -182,6 +190,18 @@ def _deterministic_parse(
         f"search <query>, find <query>, summarize <path>, "
         f"write <title>{skill_names}",
     )
+
+
+_HELP_PATTERNS = re.compile(
+    r"^(?:help|skills|commands|what can you do|what do you do|"
+    r"what skills|list skills|show skills|capabilities)\s*\??$",
+    re.IGNORECASE,
+)
+
+
+def _is_help_request(lower: str) -> bool:
+    """Return True if the message is a help/skills query."""
+    return _HELP_PATTERNS.match(lower) is not None
 
 
 def _find_skill_by_name(
@@ -271,6 +291,8 @@ def _dict_to_intent(data: dict) -> ParsedIntent:
         return WriteNoteIntent(**data)
     if kind == "skill_invocation":
         return SkillInvocationIntent(**data)
+    if kind == "help":
+        return HelpIntent()
     # Backward compat: LLM may still emit summarize_note → convert
     if kind == "summarize_note":
         return SkillInvocationIntent(
