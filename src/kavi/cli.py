@@ -720,3 +720,98 @@ def search_and_summarize_cmd(
 
     if any(not r.success for r in records):
         raise typer.Exit(1)
+
+
+@app.command("replay")
+def replay_cmd(
+    execution_id: str = typer.Option(..., "--execution-id", help="Execution ID to replay"),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+    no_log: bool = typer.Option(
+        False, "--no-log", help="Disable logging of the replay record",
+    ),
+) -> None:
+    """Re-run a past execution safely and audibly."""
+    from pathlib import Path
+
+    from kavi.config import REGISTRY_PATH
+    from kavi.consumer.replay import ReplayError, replay_execution
+
+    try:
+        original, new_record = replay_execution(
+            execution_id,
+            registry_path=REGISTRY_PATH,
+            log_path=Path(log_path) if log_path else None,
+        )
+    except ReplayError as e:
+        typer.echo(f"Replay failed: {e}")
+        raise typer.Exit(1)
+
+    short_old = original.execution_id[:12]
+    short_new = new_record.execution_id[:12]
+    rprint(
+        f"Replayed [bold]{original.skill_name}[/bold] "
+        f"from {short_old}\u2026 \u2192 {short_new}\u2026"
+    )
+    rprint(json.dumps(new_record.model_dump(), indent=2))
+
+    if not no_log:
+        from kavi.consumer.log import ExecutionLogWriter
+
+        writer = ExecutionLogWriter(Path(log_path) if log_path else None)
+        writer.append(new_record)
+
+    if not new_record.success:
+        raise typer.Exit(1)
+
+
+@app.command("session")
+def session_cmd(
+    execution_id: str | None = typer.Option(
+        None, "--execution-id", help="Execution ID to inspect",
+    ),
+    latest: bool = typer.Option(
+        False, "--latest", help="Show session for the latest execution",
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Print raw records as JSON instead of tree",
+    ),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+) -> None:
+    """Inspect an execution chain as a human-readable tree."""
+    from pathlib import Path
+
+    from kavi.consumer.session import (
+        SessionError,
+        build_session,
+        get_latest_execution,
+        render_session_tree,
+    )
+
+    effective_log = Path(log_path) if log_path else None
+
+    if execution_id is None and not latest:
+        typer.echo("Provide --execution-id or --latest")
+        raise typer.Exit(1)
+
+    try:
+        if latest:
+            execution_id = get_latest_execution(log_path=effective_log)
+
+        records = build_session(
+            execution_id,  # type: ignore[arg-type]
+            log_path=effective_log,
+        )
+    except SessionError as e:
+        typer.echo(f"Session view failed: {e}")
+        raise typer.Exit(1)
+
+    if output_json:
+        rprint(json.dumps([r.model_dump() for r in records], indent=2))
+    else:
+        rprint(render_session_tree(records))

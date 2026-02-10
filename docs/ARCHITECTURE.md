@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 331 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 362 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -352,6 +352,75 @@ Both commands log all `ExecutionRecord`s to the JSONL execution log and exit non
 
 ---
 
+## Execution replay
+
+The replay command (`kavi replay`) re-runs a past execution safely and audibly. It loads an `ExecutionRecord` from the JSONL log, validates that the skill is still TRUSTED with a matching source hash, then re-executes with the exact same input via `consume_skill()`.
+
+### Validation
+
+Before replaying, three checks must pass:
+
+1. **Record exists** — the execution_id must be found in the JSONL log.
+2. **Skill in registry** — the skill must still be present and TRUSTED.
+3. **Hash match** — the registry hash must match the hash recorded at original execution time. If the skill source has changed since the original execution, replay refuses.
+
+### Output
+
+A new `ExecutionRecord` is produced with:
+- A fresh `execution_id`
+- `parent_execution_id` set to the original execution's ID
+- All other fields populated normally by `consume_skill()`
+
+The new record is appended to the JSONL log (unless `--no-log` is passed).
+
+### CLI
+
+```bash
+kavi replay --execution-id abc123...         # replay and log
+kavi replay --execution-id abc123... --no-log  # replay without logging
+```
+
+Example output:
+
+```
+Replayed summarize_note from aaa111bbb222… → ccc333ddd444…
+{ ... full ExecutionRecord JSON ... }
+```
+
+---
+
+## Session inspection
+
+The session command (`kavi session`) provides a read-only view of an execution chain as a human-readable tree. It reads the JSONL log, builds a graph from `parent_execution_id` linkage, and renders a compact tree.
+
+### Graph construction
+
+1. Starting from the given execution_id, walk backward via `parent_execution_id` to find the root.
+2. From the root, walk forward to collect all descendants.
+3. Sort by `started_at` for deterministic ordering.
+4. Handle branching (multiple children of the same parent) gracefully.
+
+### Tree output
+
+Each node shows: skill name, success/failure marker, shortened execution_id, duration, and error message (if failed).
+
+```
+Session:
+  search_notes ✅  (id=abcd12345678…)  [1.2s]
+    summarize_note ✅ (id=efgh12345678…)  [3.4s]
+      write_note ❌ (id=ijkl12345678…)  [0ms]  needs confirmation
+```
+
+### CLI
+
+```bash
+kavi session --execution-id abc123...        # tree view from specific execution
+kavi session --latest                        # tree view from most recent execution
+kavi session --execution-id abc123... --json # raw JSON records instead of tree
+```
+
+---
+
 ## Shipped skills
 
 | Skill | Side Effect | Description |
@@ -473,7 +542,9 @@ src/kavi/
 ├── consumer/
 │   ├── shim.py         # Consumer runtime: load, validate, execute, audit
 │   ├── chain.py        # Deterministic skill chain executor
-│   └── log.py          # Append-only JSONL execution log
+│   ├── log.py          # Append-only JSONL execution log
+│   ├── replay.py       # Execution replay (re-run with trust checks)
+│   └── session.py      # Session view (execution chain tree)
 ├── forge/
 │   ├── build.py        # Sandbox build, diff gate, Claude invocation
 │   ├── invariants.py   # Structural/scope/safety invariant checks
