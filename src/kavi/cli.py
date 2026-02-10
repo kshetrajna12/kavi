@@ -509,6 +509,44 @@ def chat_cmd(
     _chat_repl(REGISTRY_PATH, effective_log)
 
 
+def format_search_results(output_json: dict, verbose: bool = False) -> str:
+    """Format search_notes output as a compact table for REPL display.
+
+    Args:
+        output_json: The output_json from an ExecutionRecord for search_notes.
+        verbose: If True, include the snippet for the top result.
+
+    Returns:
+        A formatted string ready for printing.
+    """
+    results = output_json.get("results", [])
+    if not results:
+        return "  No results."
+
+    lines: list[str] = []
+    # Header
+    lines.append(f"  {'#':<4} {'Score':<8} {'Path':<30} Title")
+    lines.append(f"  {'─' * 4} {'─' * 8} {'─' * 30} {'─' * 20}")
+
+    for i, r in enumerate(results, 1):
+        score = f"{r.get('score', 0):.4f}"
+        path = r.get("path", "")
+        title = r.get("title") or ""
+        lines.append(f"  {i:<4} {score:<8} {path:<30} {title}")
+
+    if verbose and results:
+        snippet = results[0].get("snippet")
+        if snippet:
+            # Bound snippet display to first 200 chars
+            display = snippet[:200]
+            lines.append("")
+            lines.append(f"  [dim]Snippet (#{1}):[/dim]")
+            for sline in display.splitlines():
+                lines.append(f"    {sline}")
+
+    return "\n".join(lines)
+
+
 def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
     """Interactive read-eval-print loop for Kavi Chat."""
     from kavi.agent.core import handle_message
@@ -528,6 +566,12 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
         if line.lower() in ("quit", "exit", "q"):
             rprint("Bye.")
             return
+
+        # Detect "search!" verbosity toggle — strip the "!" for the parser
+        verbose_search = False
+        if line.lower().startswith("search!"):
+            verbose_search = True
+            line = "search" + line[len("search!"):]
 
         # Track effective message (may be rebuilt with body for writes)
         effective_msg = line
@@ -607,11 +651,16 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
                 status = "[green]OK[/green]" if rec.success else "[red]FAIL[/red]"
                 rprint(f"  {rec.skill_name}: {status}")
                 if rec.output_json:
-                    # Show a compact summary
-                    for key, val in rec.output_json.items():
-                        if isinstance(val, str) and len(val) > 120:
-                            val = val[:120] + "..."
-                        rprint(f"    {key}: {val}")
+                    if rec.skill_name == "search_notes":
+                        rprint(format_search_results(
+                            rec.output_json, verbose=verbose_search,
+                        ))
+                    else:
+                        # Generic compact summary for other skills
+                        for key, val in rec.output_json.items():
+                            if isinstance(val, str) and len(val) > 120:
+                                val = val[:120] + "..."
+                            rprint(f"    {key}: {val}")
 
         # Always emit raw JSON
         rprint(f"\n[dim]{json.dumps(resp.model_dump(), indent=2)}[/dim]\n")
