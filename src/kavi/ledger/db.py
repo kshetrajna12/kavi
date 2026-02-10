@@ -158,6 +158,9 @@ def _get_schema_version(conn: sqlite3.Connection) -> int:
 
 
 def _run_migrations(conn: sqlite3.Connection, current: int) -> None:
+    # Temporarily disable FK checks — table recreates (e.g. migration 5)
+    # drop referenced tables. PRAGMA must run outside a transaction.
+    conn.execute("PRAGMA foreign_keys=OFF")
     for version in sorted(MIGRATIONS):
         if version > current:
             for sql in MIGRATIONS[version]:
@@ -166,6 +169,7 @@ def _run_migrations(conn: sqlite3.Connection, current: int) -> None:
                 "UPDATE schema_version SET version = ?", (version,),
             )
     conn.commit()
+    conn.execute("PRAGMA foreign_keys=ON")
 
 
 def init_db(db_path: Path) -> sqlite3.Connection:
