@@ -67,7 +67,8 @@ def _plan_summarize(intent: SummarizeNoteIntent) -> SkillAction:
 
 
 def _plan_write(intent: WriteNoteIntent) -> SkillAction:
+    path = f"Inbox/AI/{intent.title}.md"
     return SkillAction(
         skill_name="write_note",
-        input={"title": intent.title, "body": intent.body},
+        input={"path": path, "title": intent.title, "body": intent.body},
     )

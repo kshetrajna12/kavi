@@ -63,12 +63,13 @@ class SummarizeOutput(SkillOutput):
 
 
 class WriteInput(SkillInput):
+    path: str
     title: str
     body: str
 
 
 class WriteOutput(SkillOutput):
-    path: str
+    written_path: str
     title: str
 
 
@@ -120,7 +121,7 @@ class WriteSkill(BaseSkill):
     def execute(self, input_data: BaseModel) -> BaseModel:
         assert isinstance(input_data, WriteInput)
         return WriteOutput(
-            path=f"vault/Inbox/AI/{input_data.title}.md",
+            written_path=f"vault_out/{input_data.path}",
             title=input_data.title,
         )
 
@@ -431,6 +432,7 @@ class TestPlanner:
         assert isinstance(plan, SkillAction)
         assert plan.skill_name == "write_note"
         assert plan.input["title"] == "Test"
+        assert plan.input["path"] == "Inbox/AI/Test.md"
 
     def test_unsupported_returns_none(self) -> None:
         intent = UnsupportedIntent(message="nope")

@@ -529,8 +529,11 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
             rprint("Bye.")
             return
 
+        # Track effective message (may be rebuilt with body for writes)
+        effective_msg = line
+
         resp = handle_message(
-            line,
+            effective_msg,
             registry_path=registry_path,
             log_path=log_path,
             parse_mode="deterministic",
@@ -559,9 +562,9 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
                     rprint("[dim]No body entered, cancelled.[/dim]\n")
                     continue
                 body = "\n".join(body_lines)
-                message = f"write {resp.intent.title}\n{body}"
+                effective_msg = f"write {resp.intent.title}\n{body}"
                 resp = handle_message(
-                    message,
+                    effective_msg,
                     registry_path=registry_path,
                     log_path=log_path,
                     parse_mode="deterministic",
@@ -582,7 +585,7 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
                 resp = handle_message(
-                    line,
+                    effective_msg,
                     registry_path=registry_path,
                     log_path=log_path,
                     confirmed=True,
