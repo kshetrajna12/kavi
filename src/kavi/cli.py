@@ -351,3 +351,24 @@ def run_skill_cmd(
 
     result = skill.validate_and_run(raw_input)
     rprint(json.dumps(result, indent=2))
+
+
+@app.command("consume-skill")
+def consume_skill_cmd(
+    skill_name: str = typer.Argument(help="Name of the trusted skill to consume"),
+    input_json: str = typer.Option(..., "--json", help="Input as JSON string"),
+) -> None:
+    """Execute a trusted skill and emit an auditable ExecutionRecord as JSON."""
+    from kavi.config import REGISTRY_PATH
+    from kavi.consumer.shim import consume_skill
+
+    try:
+        raw_input = json.loads(input_json)
+    except json.JSONDecodeError as e:
+        typer.echo(f"Invalid JSON input: {e}")
+        raise typer.Exit(1)
+
+    record = consume_skill(REGISTRY_PATH, skill_name, raw_input)
+    rprint(json.dumps(record.model_dump(), indent=2))
+    if not record.success:
+        raise typer.Exit(1)

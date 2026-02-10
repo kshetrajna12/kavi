@@ -204,6 +204,55 @@ A `DrillRunner` provides selective real tooling — ruff, the policy scanner, an
 
 ---
 
+## Consumer shim
+
+The consumer shim (`kavi.consumer.shim`) is the runtime interface for downstream systems that consume the trusted skill registry. It sits outside the forge pipeline — it does not propose, build, verify, or promote. It only executes skills that have already earned TRUSTED status.
+
+### What it does
+
+1. **Lists trusted skills** — `get_trusted_skills()` loads the registry, trust-verifies each skill, and returns structured metadata including JSON schemas derived from the Pydantic input/output models.
+2. **Executes a named skill** — `consume_skill()` loads a skill with trust verification, validates the JSON input against the skill's declared schema, executes it, and returns a structured `ExecutionRecord`.
+3. **Captures provenance** — Every execution produces an `ExecutionRecord` containing: skill name, source hash, side-effect class, input/output JSON, timestamps, and success/error status. This is the audit trail.
+
+### What it does NOT do
+
+- No planning, tool selection, or LLM involvement
+- No memory or conversation state
+- No permission widening or policy changes
+- No NETWORK side effects
+
+### ExecutionRecord
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `skill_name` | str | Name of the executed skill |
+| `source_hash` | str | SHA256 hash verified at load time |
+| `side_effect_class` | str | Governance-declared side-effect class |
+| `input_json` | dict | Validated input passed to the skill |
+| `output_json` | dict \| None | Skill output (None on failure) |
+| `success` | bool | Whether execution completed without error |
+| `error` | str \| None | Error type and message if failed |
+| `started_at` | str | ISO 8601 UTC timestamp |
+| `finished_at` | str | ISO 8601 UTC timestamp |
+
+### CLI
+
+```bash
+kavi consume-skill <name> --json '{"key": "value"}'
+```
+
+Prints the `ExecutionRecord` as JSON. Exits non-zero on failure.
+
+### Boundary
+
+The consumer shim depends on:
+- `skills/loader.py` — `load_skill()` for trust-verified loading, `list_skills()` for registry enumeration
+- `skills/base.py` — `BaseSkill.validate_and_run()` for schema validation and execution
+
+It does NOT depend on the ledger, forge, or any build infrastructure.
+
+---
+
 ## Project layout
 
 ```
@@ -212,6 +261,8 @@ src/kavi/
 ├── config.py           # Path constants + Sparkstation config
 ├── artifacts/
 │   └── writer.py       # Content-addressed artifact writer
+├── consumer/
+│   └── shim.py         # Consumer runtime: load, validate, execute, audit
 ├── forge/
 │   ├── build.py        # Sandbox build, diff gate, Claude invocation
 │   ├── invariants.py   # Structural/scope/safety invariant checks
