@@ -159,9 +159,8 @@ def render_session_tree(records: list[ExecutionRecord]) -> str:
     def _render_node(rec: ExecutionRecord, depth: int) -> None:
         indent = "  " * (depth + 1)
         marker = "\u2705" if rec.success else "\u274c"
-        short_id = rec.execution_id[:12]
         duration = _format_duration(rec.started_at, rec.finished_at)
-        line = f"{indent}{rec.skill_name} {marker}  (id={short_id}\u2026)  [{duration}]"
+        line = f"{indent}{rec.skill_name} {marker}  (id={rec.execution_id})  [{duration}]"
         if not rec.success and rec.error:
             # Truncate long error messages
             err_msg = rec.error
