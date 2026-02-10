@@ -68,10 +68,13 @@ class AgentResponse(BaseModel):
     """Top-level response from AgentCore.handle_message.
 
     Always populated — on error, `error` is set and `records` is empty.
+    ``warnings`` carries parser-generated notices when parts of the user
+    request could not be fulfilled (e.g. trailing intents ignored).
     """
 
     intent: ParsedIntent
     plan: PlannedAction | None = None
     records: list[ExecutionRecord] = Field(default_factory=list)
     needs_confirmation: bool = False
+    warnings: list[str] = Field(default_factory=list)
     error: str | None = None

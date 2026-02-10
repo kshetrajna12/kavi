@@ -60,17 +60,20 @@ def handle_message(
         )
 
     # 2. Parse intent
-    intent = parse_intent(message, skills, mode=parse_mode)
+    intent, warnings = parse_intent(message, skills, mode=parse_mode)
 
     # 3. Check for unsupported
     if isinstance(intent, UnsupportedIntent):
-        return AgentResponse(intent=intent, error=intent.message)
+        return AgentResponse(
+            intent=intent, warnings=warnings, error=intent.message,
+        )
 
     # 4. Plan
     plan = intent_to_plan(intent)
     if plan is None:
         return AgentResponse(
             intent=intent,
+            warnings=warnings,
             error="Could not create a plan for this intent.",
         )
 
@@ -84,6 +87,7 @@ def handle_message(
             intent=intent,
             plan=plan,
             needs_confirmation=True,
+            warnings=warnings,
             error="No body provided. Use the REPL for multi-line input.",
         )
 
@@ -93,6 +97,7 @@ def handle_message(
             intent=intent,
             plan=plan,
             needs_confirmation=True,
+            warnings=warnings,
         )
 
     # 7. Execute
@@ -102,6 +107,7 @@ def handle_message(
         return AgentResponse(
             intent=intent,
             plan=plan,
+            warnings=warnings,
             error=f"Execution error: {exc}",
         )
 
@@ -121,6 +127,7 @@ def handle_message(
         intent=intent,
         plan=plan,
         records=records,
+        warnings=warnings,
         error=error,
     )
 

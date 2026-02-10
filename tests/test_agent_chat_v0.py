@@ -13,6 +13,7 @@ from kavi.agent.core import handle_message
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
+    ParsedIntent,
     SearchAndSummarizeIntent,
     SkillAction,
     SummarizeNoteIntent,
@@ -246,17 +247,20 @@ class TestParserLLMSuccess:
             "top_k": 3,
         }
         with patch(_GEN, return_value=json.dumps(resp)):
-            intent = parse_intent(
+            intent, warnings = parse_intent(
                 "find notes about machine learning", SKILL_INFOS,
             )
         assert isinstance(intent, SearchAndSummarizeIntent)
         assert intent.query == "machine learning"
         assert intent.top_k == 3
+        assert warnings == []
 
     def test_summarize_note(self) -> None:
         resp = {"kind": "summarize_note", "path": "notes/ml.md"}
         with patch(_GEN, return_value=json.dumps(resp)):
-            intent = parse_intent("summarize notes/ml.md", SKILL_INFOS)
+            intent, _ = parse_intent(
+                "summarize notes/ml.md", SKILL_INFOS,
+            )
         assert isinstance(intent, SummarizeNoteIntent)
         assert intent.path == "notes/ml.md"
 
@@ -267,7 +271,7 @@ class TestParserLLMSuccess:
             "body": "Hello world",
         }
         with patch(_GEN, return_value=json.dumps(resp)):
-            intent = parse_intent(
+            intent, _ = parse_intent(
                 "write a note called Test", SKILL_INFOS,
             )
         assert isinstance(intent, WriteNoteIntent)
@@ -277,7 +281,9 @@ class TestParserLLMSuccess:
     def test_unsupported(self) -> None:
         resp = {"kind": "unsupported", "message": "Not supported"}
         with patch(_GEN, return_value=json.dumps(resp)):
-            intent = parse_intent("delete everything", SKILL_INFOS)
+            intent, _ = parse_intent(
+                "delete everything", SKILL_INFOS,
+            )
         assert isinstance(intent, UnsupportedIntent)
 
     def test_llm_returns_markdown_fenced_json(self) -> None:
@@ -287,16 +293,47 @@ class TestParserLLMSuccess:
             '```'
         )
         with patch(_GEN, return_value=raw):
-            intent = parse_intent("summarize a.md", SKILL_INFOS)
+            intent, _ = parse_intent(
+                "summarize a.md", SKILL_INFOS,
+            )
         assert isinstance(intent, SummarizeNoteIntent)
         assert intent.path == "a.md"
+
+    def test_llm_warnings_propagated(self) -> None:
+        """LLM returns warnings for trailing intents."""
+        resp = {
+            "kind": "search_and_summarize",
+            "query": "architecture",
+            "warnings": [
+                "Ignored: write_note is not part of "
+                "search_and_summarize. Ask separately.",
+            ],
+        }
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, warnings = parse_intent(
+                "search architecture then write a note",
+                SKILL_INFOS,
+            )
+        assert isinstance(intent, SearchAndSummarizeIntent)
+        assert len(warnings) == 1
+        assert "write_note" in warnings[0]
+
+    def test_no_warnings_field_means_empty_list(self) -> None:
+        """LLM omits warnings → empty list, not error."""
+        resp = {"kind": "summarize_note", "path": "a.md"}
+        with patch(_GEN, return_value=json.dumps(resp)):
+            _, warnings = parse_intent(
+                "summarize a.md", SKILL_INFOS,
+            )
+        assert warnings == []
 
 
 class TestParserDeterministic:
     """parse_intent with mode='deterministic' — explicit prefixes only."""
 
-    def _parse(self, msg: str) -> object:
-        return parse_intent(msg, SKILL_INFOS, mode="deterministic")
+    def _parse(self, msg: str) -> ParsedIntent:
+        intent, _ = parse_intent(msg, SKILL_INFOS, mode="deterministic")
+        return intent
 
     def test_summarize_path(self) -> None:
         intent = self._parse("summarize notes/ml.md")
@@ -355,14 +392,15 @@ class TestParserDeterministic:
 
         err = SparkUnavailableError("down")
         with patch(_GEN, side_effect=err):
-            intent = parse_intent(
+            intent, warnings = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
         assert isinstance(intent, SummarizeNoteIntent)
+        assert warnings == []
 
     def test_llm_bad_json_triggers_fallback(self) -> None:
         with patch(_GEN, return_value="not json at all"):
-            intent = parse_intent(
+            intent, _ = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
         assert isinstance(intent, SummarizeNoteIntent)
@@ -508,6 +546,33 @@ class TestHandleMessage:
         assert data["intent"]["kind"] == "summarize_note"
         assert data["plan"]["kind"] == "skill"
         assert len(data["records"]) == 1
+        assert data["warnings"] == []
+
+    def test_warnings_propagated_to_response(self) -> None:
+        """LLM parser warnings appear on AgentResponse.warnings."""
+        llm = json.dumps({
+            "kind": "search_and_summarize",
+            "query": "arch",
+            "warnings": ["Ignored: write_note. Ask separately."],
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "search arch then write a note",
+                registry_path=FAKE_REGISTRY,
+            )
+        assert resp.warnings == ["Ignored: write_note. Ask separately."]
+        assert isinstance(resp.intent, SearchAndSummarizeIntent)
+        assert resp.error is None
+
+    def test_no_warnings_by_default(self) -> None:
+        llm = json.dumps({
+            "kind": "summarize_note", "path": "a.md",
+        })
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "summarize a.md", registry_path=FAKE_REGISTRY,
+            )
+        assert resp.warnings == []
 
 
 class TestHandleMessageFallback:

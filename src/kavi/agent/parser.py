@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from kavi.agent.models import (
     ParsedIntent,
@@ -24,24 +24,26 @@ from kavi.llm.spark import SparkUnavailableError, generate
 
 _SYSTEM_PROMPT = """\
 You are an intent parser for a note-taking assistant.
-Given a user message, extract the intent as strict JSON matching one of \
+Given a user message, extract ONE intent as strict JSON matching one of \
 these schemas:
 
 1. Search and summarize notes:
    {"kind": "search_and_summarize", "query": "<terms>",
-    "top_k": <int>, "style": "bullet"|"paragraph"}
+    "top_k": <int>, "style": "bullet"|"paragraph",
+    "warnings": ["..."]}
 
 2. Summarize a specific note:
    {"kind": "summarize_note", "path": "<file path>",
-    "style": "bullet"|"paragraph"}
+    "style": "bullet"|"paragraph", "warnings": ["..."]}
 
 3. Write a new note:
    {"kind": "write_note", "title": "<note title>",
-    "body": "<note content>"}
+    "body": "<note content>", "warnings": ["..."]}
 
 4. Anything else:
    {"kind": "unsupported",
-    "message": "<explain what is supported>"}
+    "message": "<explain what is supported>",
+    "warnings": ["..."]}
 
 Rules:
 - Output ONLY valid JSON, no markdown fences, no extra text.
@@ -49,6 +51,15 @@ Rules:
 - If the user mentions a .md file path, use summarize_note.
 - If the user wants to find/search notes, use search_and_summarize.
 - If the user wants to write/create a note, use write_note.
+- Each message maps to EXACTLY ONE intent. Pick the best-fitting one.
+- If the message requests multiple actions (e.g. "search X then write Y"),
+  pick the primary intent and add a warning for each ignored action, e.g.
+  "Ignored: write_note is not part of search_and_summarize. \
+Ask separately."
+- Never infer write_note as part of search_and_summarize or vice versa.
+- For write_note, both title and body are required. If body is missing,
+  still return write_note with an empty body string.
+- Omit the "warnings" field entirely if there are no warnings.
 """
 
 _UNSUPPORTED_HELP = (
@@ -60,13 +71,24 @@ _UNSUPPORTED_HELP = (
 ParseMode = Literal["llm", "deterministic"]
 
 
+class ParseResult(NamedTuple):
+    """Return type of ``parse_intent`` — intent plus optional warnings."""
+
+    intent: ParsedIntent
+    warnings: list[str]
+
+
 def parse_intent(
     message: str,
     skills: list[SkillInfo],
     *,
     mode: ParseMode = "llm",
-) -> ParsedIntent:
+) -> ParseResult:
     """Parse user message into a structured intent.
+
+    Returns:
+        ParseResult(intent, warnings).  ``warnings`` is non-empty when
+        parts of the user request were ignored (e.g. trailing intents).
 
     Args:
         message: Raw user input.
@@ -75,21 +97,24 @@ def parse_intent(
               "deterministic" requires explicit command prefixes only.
     """
     if mode == "deterministic":
-        return _deterministic_parse(message)
+        return ParseResult(_deterministic_parse(message), [])
     return _llm_parse(message, skills)
 
 
-def _llm_parse(message: str, skills: list[SkillInfo]) -> ParsedIntent:
+def _llm_parse(
+    message: str, skills: list[SkillInfo],
+) -> ParseResult:
     """LLM-based parser with deterministic fallback on failure."""
     try:
         prompt = _build_prompt(message, skills)
         raw = generate(prompt)
         data = _parse_json_response(raw)
-        return _dict_to_intent(data)
+        warnings = data.pop("warnings", None) or []
+        return ParseResult(_dict_to_intent(data), warnings)
     except SparkUnavailableError:
-        return _deterministic_parse(message)
+        return ParseResult(_deterministic_parse(message), [])
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        return _deterministic_parse(message)
+        return ParseResult(_deterministic_parse(message), [])
 
 
 def _deterministic_parse(message: str) -> ParsedIntent:

@@ -592,6 +592,10 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
                 rprint("[dim]Cancelled.[/dim]\n")
                 continue
 
+        # Show parser warnings (trailing intents ignored, etc.)
+        for w in resp.warnings:
+            rprint(f"[yellow]Warning:[/yellow] {w}")
+
         # Pretty-print results
         if resp.error:
             rprint(f"[red]Error:[/red] {resp.error}")
