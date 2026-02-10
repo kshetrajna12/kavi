@@ -310,24 +310,9 @@ def _check_escalation_triggers(
     return triggers
 
 
-def advise_retry(
-    conn: sqlite3.Connection,
-    *,
-    analysis: FailureAnalysis,
-    original_packet: str,
-    output_dir: Path,
-    auto: bool = True,
-) -> tuple[str, list[EscalationTrigger]]:
-    """LLM-advised BUILD_PACKET diff for retry.
-
-    Returns (proposed_packet_content, escalation_triggers).
-    If escalation_triggers is non-empty, human review required.
-    """
-    from openai import OpenAI
-
-    client = OpenAI(api_key="dummy-key", base_url="http://localhost:8000/v1")
-
-    prompt = f"""You are a build system assistant. A skill build attempt failed.
+def _format_advisory_prompt(analysis: FailureAnalysis, original_packet: str) -> str:
+    """Build the LLM prompt for retry advisory."""
+    return f"""You are a build system assistant. A skill build attempt failed.
 
 ## Failure Classification
 - **Kind:** {analysis.kind.value}
@@ -352,11 +337,31 @@ BUILD_PACKET content (markdown), nothing else. Keep the same structure but fix t
 instructions to avoid the failure. Do NOT widen permissions, add secrets, or change
 the side effect class."""
 
-    response = client.chat.completions.create(
-        model="gpt-oss-20b",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    proposed = response.choices[0].message.content or original_packet
+
+def advise_retry(
+    conn: sqlite3.Connection,
+    *,
+    analysis: FailureAnalysis,
+    original_packet: str,
+    output_dir: Path,
+    auto: bool = True,
+) -> tuple[str, list[EscalationTrigger]]:
+    """LLM-advised BUILD_PACKET diff for retry.
+
+    Returns (proposed_packet_content, escalation_triggers).
+    If escalation_triggers is non-empty, human review required.
+    Falls back to deterministic-only (original packet + AMBIGUOUS) if Spark unavailable.
+    """
+    from kavi.llm.spark import SparkUnavailableError, generate, is_available
+
+    if not is_available():
+        return original_packet, [EscalationTrigger.AMBIGUOUS]
+
+    prompt = _format_advisory_prompt(analysis, original_packet)
+    try:
+        proposed = generate(prompt, temperature=0)
+    except SparkUnavailableError:
+        return original_packet, [EscalationTrigger.AMBIGUOUS]
 
     triggers = _check_escalation_triggers(
         conn,

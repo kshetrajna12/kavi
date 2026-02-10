@@ -134,6 +134,8 @@ def research_skill_cmd(
                     break
 
         if original_packet:
+            from kavi.llm.spark import SparkUnavailableError
+
             try:
                 proposed, triggers = advise_retry(
                     conn, analysis=analysis,
@@ -146,6 +148,9 @@ def research_skill_cmd(
                     rprint("[yellow]Human review required before retry.[/yellow]")
                 else:
                     rprint("\n[green]LLM advisory ready.[/green] No escalation triggers.")
+            except SparkUnavailableError:
+                rprint("\n[yellow]Sparkstation unavailable.[/yellow]")
+                rprint("Proceeding with deterministic research only.")
             except Exception as e:
                 rprint(f"\n[yellow]LLM advisory failed:[/yellow] {e}")
                 rprint("Proceeding with deterministic research only.")
