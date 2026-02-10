@@ -722,8 +722,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                                 val = val[:120] + "..."
                             rprint(f"    {key}: {val}")
 
-        # Always emit raw JSON
-        rprint(f"\n[dim]{json.dumps(resp.model_dump(), indent=2)}[/dim]\n")
+        rprint("")
 
 
 @app.command("search-and-summarize")
