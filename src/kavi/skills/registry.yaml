@@ -8,3 +8,12 @@ skills:
   required_secrets: []
   version: 1.0.0
   hash: 357f8dbc0ec96fa152b709b0d39522c9bee724c802a0d9060f936038ca5d236c
+- name: read_notes_by_tag
+  module_path: kavi.skills.read_notes_by_tag.ReadNotesByTagSkill
+  description: Read all notes matching a tag from the vault
+  input_model: kavi.skills.read_notes_by_tag.ReadNotesByTagInput
+  output_model: kavi.skills.read_notes_by_tag.ReadNotesByTagOutput
+  side_effect_class: READ_ONLY
+  required_secrets: []
+  version: 1.0.0
+  hash: 4f8532e4c903c6ba4f80f4f0962ec19e80357fcbd83a92527f1e7c5256edc65d
