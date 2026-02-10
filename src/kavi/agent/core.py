@@ -8,12 +8,14 @@ AgentResponse. Never raises — all errors captured in the response.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
     SkillAction,
     UnsupportedIntent,
+    WriteNoteIntent,
 )
 from kavi.agent.parser import parse_intent
 from kavi.agent.planner import intent_to_plan
@@ -31,6 +33,7 @@ def handle_message(
     registry_path: Path,
     log_path: Path | None = None,
     confirmed: bool = False,
+    parse_mode: Literal["llm", "deterministic"] = "llm",
 ) -> AgentResponse:
     """Process a single user message and return an auditable response.
 
@@ -41,18 +44,23 @@ def handle_message(
         confirmed: If True, skip confirmation for FILE_WRITE skills.
                    In single-turn mode this is False; the REPL sets it
                    after receiving explicit user consent.
+        parse_mode: "llm" uses Sparkstation with deterministic fallback.
+                    "deterministic" requires explicit command prefixes.
+                    REPL uses "deterministic" to avoid misclassification.
     """
     # 1. Load available skills
     try:
         skills = get_trusted_skills(registry_path)
     except Exception as exc:  # noqa: BLE001
         return AgentResponse(
-            intent=UnsupportedIntent(message="Failed to load skill registry."),
+            intent=UnsupportedIntent(
+                message="Failed to load skill registry.",
+            ),
             error=f"Registry error: {exc}",
         )
 
     # 2. Parse intent
-    intent = parse_intent(message, skills)
+    intent = parse_intent(message, skills, mode=parse_mode)
 
     # 3. Check for unsupported
     if isinstance(intent, UnsupportedIntent):
@@ -66,7 +74,20 @@ def handle_message(
             error="Could not create a plan for this intent.",
         )
 
-    # 5. Check confirmation for FILE_WRITE
+    # 5. Write with empty body — prompt user instead of executing
+    if (
+        isinstance(intent, WriteNoteIntent)
+        and not intent.body
+        and not confirmed
+    ):
+        return AgentResponse(
+            intent=intent,
+            plan=plan,
+            needs_confirmation=True,
+            error="No body provided. Use the REPL for multi-line input.",
+        )
+
+    # 6. Check confirmation for FILE_WRITE
     if not confirmed and _needs_confirmation(plan, skills):
         return AgentResponse(
             intent=intent,
@@ -74,7 +95,7 @@ def handle_message(
             needs_confirmation=True,
         )
 
-    # 6. Execute
+    # 7. Execute
     try:
         records = _execute(plan, registry_path)
     except Exception as exc:  # noqa: BLE001
@@ -84,13 +105,13 @@ def handle_message(
             error=f"Execution error: {exc}",
         )
 
-    # 7. Log
+    # 8. Log
     if log_path is not None:
         writer = ExecutionLogWriter(log_path)
         for rec in records:
             writer.append(rec)
 
-    # 8. Return
+    # 9. Return
     error = None
     if any(not r.success for r in records):
         failed = [r for r in records if not r.success]
@@ -104,8 +125,11 @@ def handle_message(
     )
 
 
-def _needs_confirmation(plan: SkillAction | ChainAction, skills: list[SkillInfo]) -> bool:
-    """Check if any skill in the plan has a side effect requiring confirmation."""
+def _needs_confirmation(
+    plan: SkillAction | ChainAction,
+    skills: list[SkillInfo],
+) -> bool:
+    """Check if any skill in the plan requires confirmation."""
     skill_effects = {s.name: s.side_effect_class for s in skills}
 
     if isinstance(plan, SkillAction):

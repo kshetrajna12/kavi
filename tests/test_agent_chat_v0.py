@@ -19,7 +19,7 @@ from kavi.agent.models import (
     UnsupportedIntent,
     WriteNoteIntent,
 )
-from kavi.agent.parser import _fallback_parse, parse_intent
+from kavi.agent.parser import parse_intent
 from kavi.agent.planner import intent_to_plan
 from kavi.consumer.shim import SkillInfo
 from kavi.skills.base import BaseSkill, SkillInput, SkillOutput
@@ -292,45 +292,63 @@ class TestParserLLMSuccess:
         assert intent.path == "a.md"
 
 
-class TestParserFallback:
-    """Sparkstation unavailable — deterministic fallback."""
+class TestParserDeterministic:
+    """parse_intent with mode='deterministic' — explicit prefixes only."""
+
+    def _parse(self, msg: str) -> object:
+        return parse_intent(msg, SKILL_INFOS, mode="deterministic")
 
     def test_summarize_path(self) -> None:
-        intent = _fallback_parse("summarize notes/ml.md")
+        intent = self._parse("summarize notes/ml.md")
         assert isinstance(intent, SummarizeNoteIntent)
         assert intent.path == "notes/ml.md"
 
     def test_summarize_with_paragraph(self) -> None:
-        intent = _fallback_parse("summarize notes/ml.md paragraph")
+        intent = self._parse("summarize notes/ml.md paragraph")
         assert isinstance(intent, SummarizeNoteIntent)
         assert intent.style == "paragraph"
 
     def test_write_note(self) -> None:
-        intent = _fallback_parse("write My Title\nBody here")
+        intent = self._parse("write My Title\nBody here")
         assert isinstance(intent, WriteNoteIntent)
         assert intent.title == "My Title"
         assert intent.body == "Body here"
 
     def test_write_note_colon_syntax(self) -> None:
-        intent = _fallback_parse("write note: My Note\nBody text")
+        intent = self._parse("write note: My Note\nBody text")
         assert isinstance(intent, WriteNoteIntent)
         assert intent.title == "My Note"
         assert intent.body == "Body text"
 
     def test_search_query(self) -> None:
-        intent = _fallback_parse("search machine learning")
+        intent = self._parse("search machine learning")
         assert isinstance(intent, SearchAndSummarizeIntent)
         assert intent.query == "machine learning"
 
     def test_find_query(self) -> None:
-        intent = _fallback_parse("find notes about python")
+        intent = self._parse("find notes about python")
         assert isinstance(intent, SearchAndSummarizeIntent)
         assert intent.query == "python"
 
     def test_unsupported_message(self) -> None:
-        intent = _fallback_parse("do something random")
+        intent = self._parse("do something random")
         assert isinstance(intent, UnsupportedIntent)
-        assert "Supported commands" in intent.message
+        assert "Available commands" in intent.message
+
+    def test_ambiguous_input_not_executed(self) -> None:
+        """Ambiguous text without a command prefix → UnsupportedIntent."""
+        intent = self._parse("Kshetrajna Note")
+        assert isinstance(intent, UnsupportedIntent)
+
+    def test_bare_text_not_executed(self) -> None:
+        """Bare sentence without command prefix → UnsupportedIntent."""
+        intent = self._parse("notes about machine learning")
+        assert isinstance(intent, UnsupportedIntent)
+
+    def test_partial_prefix_not_matched(self) -> None:
+        """'searching' is not 'search' — should not match."""
+        intent = self._parse("searching for python notes")
+        assert isinstance(intent, UnsupportedIntent)
 
     def test_spark_unavailable_triggers_fallback(self) -> None:
         from kavi.llm.spark import SparkUnavailableError
@@ -531,6 +549,67 @@ class TestHandleMessageFallback:
             )
         assert isinstance(resp.intent, UnsupportedIntent)
         assert resp.error is not None
+
+
+class TestDeterministicParseMode:
+    """handle_message with parse_mode='deterministic' (REPL mode)."""
+
+    def test_ambiguous_input_returns_unsupported(self) -> None:
+        """Ambiguous text in deterministic mode → error, no execution."""
+        with _ctx():
+            resp = handle_message(
+                "Kshetrajna Note",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, UnsupportedIntent)
+        assert resp.error is not None
+        assert resp.records == []
+
+    def test_deterministic_search_works(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "search machine learning",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, SearchAndSummarizeIntent)
+        assert len(resp.records) == 2
+
+    def test_deterministic_summarize_works(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "summarize notes/ml.md",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, SummarizeNoteIntent)
+        assert len(resp.records) == 1
+
+    def test_write_empty_body_needs_confirmation(self) -> None:
+        """Write with no body → needs_confirmation + helpful error."""
+        with _ctx():
+            resp = handle_message(
+                "write My Title",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, WriteNoteIntent)
+        assert resp.needs_confirmation is True
+        assert resp.error is not None
+        assert "body" in resp.error.lower()
+
+    def test_write_with_body_needs_file_write_confirm(self) -> None:
+        """Write with body still needs FILE_WRITE confirmation."""
+        with _ctx():
+            resp = handle_message(
+                "write My Title\nSome body text",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, WriteNoteIntent)
+        assert resp.needs_confirmation is True
+        assert resp.records == []
 
 
 class TestChainLengthEnforcement:

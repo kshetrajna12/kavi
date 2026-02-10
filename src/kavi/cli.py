@@ -514,7 +514,7 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
     from kavi.agent.core import handle_message
 
     rprint("[bold]Kavi Chat v0[/bold] — type 'quit' or Ctrl-D to exit")
-    rprint("Supported: search/find, summarize, write note\n")
+    rprint("Commands: search <query>, summarize <path>, write <title>\n")
 
     while True:
         try:
@@ -533,6 +533,7 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
             line,
             registry_path=registry_path,
             log_path=log_path,
+            parse_mode="deterministic",
         )
 
         # If write_note with empty body, prompt for body before confirming
@@ -563,6 +564,7 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
                     message,
                     registry_path=registry_path,
                     log_path=log_path,
+                    parse_mode="deterministic",
                 )
             except (EOFError, KeyboardInterrupt):
                 rprint("\nBye.")
@@ -584,6 +586,7 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
                     registry_path=registry_path,
                     log_path=log_path,
                     confirmed=True,
+                    parse_mode="deterministic",
                 )
             else:
                 rprint("[dim]Cancelled.[/dim]\n")
