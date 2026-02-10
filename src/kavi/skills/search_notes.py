@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path, PurePosixPath
 
 from pydantic import Field
@@ -104,15 +105,27 @@ def _has_tag(content: str, tag: str) -> bool:
     return False
 
 
+def _normalize_snippet(text: str) -> str:
+    """Collapse literal escape sequences and real newlines into spaces."""
+    # Literal escape sequences first (order matters: \r\n before \n/\r)
+    text = text.replace(r"\r\n", " ").replace(r"\n", " ").replace(r"\r", " ")
+    # Real newlines
+    text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    # Collapse repeated whitespace
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _snippet(content: str, query: str, length: int = _SNIPPET_CHARS) -> str:
     """Return a snippet around the first occurrence of *query*, or the start."""
     lower = content.lower()
     q_lower = query.lower()
     pos = lower.find(q_lower)
     if pos == -1:
-        return content[:length].strip()
-    start = max(0, pos - length // 4)
-    return content[start : start + length].strip()
+        raw = content[:length].strip()
+    else:
+        start = max(0, pos - length // 4)
+        raw = content[start : start + length].strip()
+    return _normalize_snippet(raw)
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:

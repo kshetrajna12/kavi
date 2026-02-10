@@ -186,6 +186,25 @@ class TestHelpers:
         s = _snippet(content, "xyz")
         assert s == content
 
+    def test_snippet_normalizes_real_newlines(self) -> None:
+        content = "Line one\nLine two\r\nLine three"
+        s = _snippet(content, "Line")
+        assert "\n" not in s
+        assert "\r" not in s
+        assert "Line one Line two Line three" == s
+
+    def test_snippet_normalizes_literal_escaped_newlines(self) -> None:
+        # Regression: file with literal \n should produce clean snippet
+        raw = r"# Meeting Notes\n\nDiscussed architecture.\n- Use SQLite"
+        s = _snippet(raw, "Meeting")
+        assert r"\n" not in s
+        assert "Meeting Notes" in s
+
+    def test_snippet_collapses_whitespace(self) -> None:
+        content = "word1   \n  word2"
+        s = _snippet(content, "word1")
+        assert s == "word1 word2"
+
     def test_cosine_identical(self) -> None:
         v = [1.0, 0.0, 1.0]
         assert abs(_cosine_similarity(v, v) - 1.0) < 1e-6
