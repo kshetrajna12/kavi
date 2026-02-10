@@ -14,8 +14,9 @@ from kavi.agent.models import (
     ParsedIntent,
     SessionContext,
     SkillInvocationIntent,
+    note_path_for_title,
 )
-from kavi.consumer.shim import ExecutionRecord
+from kavi.consumer.shim import ExecutionRecord, SkillInfo
 
 # Fields to try when extracting a concrete value from an anchor.
 # Order matters — first match wins.
@@ -35,18 +36,20 @@ def _anchor_value(anchor: Anchor) -> str | None:
     return None
 
 
-_SKILL_INPUT_FIELDS: dict[str, set[str]] = {
-    "search_notes": {"query", "top_k"},
-    "summarize_note": {"path", "style"},
-    "write_note": {"path", "title", "body", "tags"},
-    "read_notes_by_tag": {"tag"},
-    "http_get_json": {"url", "headers"},
-}
+def _input_fields_for(
+    skill_name: str, skills: list[SkillInfo],
+) -> set[str] | None:
+    """Derive valid input field names from a skill's input_schema."""
+    for s in skills:
+        if s.name == skill_name:
+            return set(s.input_schema.get("properties", {}).keys())
+    return None
 
 
 def _resolve_again(
     intent: SkillInvocationIntent,
     session: SessionContext,
+    skills: list[SkillInfo],
 ) -> SkillInvocationIntent | AmbiguityResponse:
     """Resolve 'again' — re-invoke the last skill with optional overrides."""
     if not session.anchors:
@@ -59,7 +62,7 @@ def _resolve_again(
 
     last = session.anchors[-1]
     # Only copy anchor data fields that are valid inputs for the skill
-    allowed = _SKILL_INPUT_FIELDS.get(last.skill_name)
+    allowed = _input_fields_for(last.skill_name, skills)
     new_input: dict[str, Any] = {}
     for key, val in last.data.items():
         if allowed is None or key in allowed:
@@ -110,23 +113,31 @@ def _resolve_write_that(
             fname = fname[:-3]
         title = f"Summary: {fname}"
 
-    path = f"Inbox/AI/{title}.md"
-
     return SkillInvocationIntent(
         skill_name="write_note",
-        input={"path": path, "title": title, "body": body},
+        input={
+            "path": note_path_for_title(title),
+            "title": title,
+            "body": body,
+        },
     )
 
 
 def resolve_refs(
     intent: ParsedIntent,
     session: SessionContext | None,
+    skills: list[SkillInfo] | None = None,
 ) -> ParsedIntent | AmbiguityResponse:
     """Resolve ref markers in intent inputs using session anchors.
 
     Only processes SkillInvocationIntent — other intent types pass through.
     Returns the intent with refs replaced, or AmbiguityResponse if
     resolution fails.
+
+    Args:
+        skills: Skill metadata for input-field filtering. When provided,
+                "again" only copies anchor fields that match the skill's
+                input schema. When None, all anchor data is copied.
     """
     if session is None:
         return intent
@@ -136,7 +147,7 @@ def resolve_refs(
 
     # Special case: "again" — re-invoke last skill
     if intent.skill_name == "ref:last_skill":
-        return _resolve_again(intent, session)
+        return _resolve_again(intent, session, skills or [])
 
     # Special case: "write that" — write last result to a note
     if (

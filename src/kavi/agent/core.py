@@ -77,7 +77,7 @@ def handle_message(
 
     # 2b. Resolve references (D015)
     if session is not None and not isinstance(intent, (UnsupportedIntent, HelpIntent)):
-        resolved = resolve_refs(intent, session)
+        resolved = resolve_refs(intent, session, skills=skills)
         if isinstance(resolved, AmbiguityResponse):
             return AgentResponse(
                 intent=intent,

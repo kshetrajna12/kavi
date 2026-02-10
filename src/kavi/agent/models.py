@@ -186,6 +186,16 @@ ParsedIntent = (
 )
 
 
+# ── Conventions ──────────────────────────────────────────────────────
+
+NOTE_PATH_PREFIX = "Inbox/AI"
+
+
+def note_path_for_title(title: str) -> str:
+    """Build the canonical vault path for a generated note."""
+    return f"{NOTE_PATH_PREFIX}/{title}.md"
+
+
 # ── Planned actions ──────────────────────────────────────────────────
 
 

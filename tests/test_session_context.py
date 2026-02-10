@@ -445,7 +445,7 @@ class TestResolveAgain:
             skill_name="ref:last_skill",
             input={"ref:again": "true"},
         )
-        result = resolve_refs(intent, ctx)
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
         assert isinstance(result, SkillInvocationIntent)
         assert result.skill_name == "search_notes"
         assert result.input["query"] == "ml"
@@ -464,7 +464,7 @@ class TestResolveAgain:
             skill_name="ref:last_skill",
             input={"ref:again": "true", "style": "paragraph"},
         )
-        result = resolve_refs(intent, ctx)
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
         assert isinstance(result, SkillInvocationIntent)
         assert result.skill_name == "summarize_note"
         assert result.input["style"] == "paragraph"
@@ -479,9 +479,25 @@ class TestResolveAgain:
             skill_name="ref:last_skill",
             input={"ref:again": "true"},
         )
-        result = resolve_refs(intent, ctx)
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
         assert isinstance(result, AmbiguityResponse)
         assert "again" in result.message.lower()
+
+    def test_again_unknown_skill_copies_all_data(self) -> None:
+        """When skill isn't in registry, fall back to copying all data."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor("unknown_skill", "aaa", {"foo": "bar"}),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="ref:last_skill",
+            input={"ref:again": "true"},
+        )
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["foo"] == "bar"
 
 
 class TestResolveWriteThat:

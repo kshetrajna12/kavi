@@ -12,6 +12,7 @@ from kavi.agent.models import (
     SkillInvocationIntent,
     UnsupportedIntent,
     WriteNoteIntent,
+    note_path_for_title,
 )
 from kavi.consumer.chain import (
     ChainOptions,
@@ -63,7 +64,7 @@ def _plan_search_and_summarize(intent: SearchAndSummarizeIntent) -> ChainAction:
 
 
 def _plan_write(intent: WriteNoteIntent) -> SkillAction:
-    path = f"Inbox/AI/{intent.title}.md"
+    path = note_path_for_title(intent.title)
     return SkillAction(
         skill_name="write_note",
         input={"path": path, "title": intent.title, "body": intent.body},
