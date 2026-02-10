@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 569 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 595 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -430,6 +430,7 @@ kavi session --execution-id abc123... --json # raw JSON records instead of tree
 | `summarize_note` | READ_ONLY | Summarize a vault note via Sparkstation with graceful fallback |
 | `search_notes` | READ_ONLY | Semantic search over vault notes via bge-large embeddings with lexical fallback |
 | `http_get_json` | NETWORK | Fetch JSON from a URL via stdlib urllib.request (D013: SECRET_READ governance) |
+| `create_daily_note` | FILE_WRITE | Create or append a timestamped entry to today's daily note |
 
 ### summarize_note
 
@@ -516,7 +517,7 @@ AgentResponse     ← intent + plan + records + session + error
 
 - **READ_ONLY** skills execute immediately.
 - **FILE_WRITE**, **NETWORK**, and **SECRET_READ** skills require explicit confirmation:
-  - Single-turn mode (`kavi chat -m "..."`): returns `needs_confirmation=true` without executing.
+  - Single-turn mode (`kavi chat -m "..."`): returns `needs_confirmation=true` without executing. Pass `--confirmed` to pre-confirm.
   - REPL mode: prompts the user and proceeds only on "yes".
 
 ### Parser fallback
@@ -527,6 +528,8 @@ When Sparkstation is unavailable or returns unparseable JSON, the parser falls b
 - `write <title>\n<body>` → `WriteNoteIntent`
 - `write that [to a note]` → `SkillInvocationIntent(write_note)` with `ref:last` (D015)
 - `again [paragraph]` / `do it again` → re-run with `ref:last` (D015)
+- `search/find for that/it` → `SearchAndSummarizeIntent` with `ref:last` (D015)
+- `search/find again` → `SearchAndSummarizeIntent` with `ref:last_search` (D015)
 - `search/find <query>` → `SearchAndSummarizeIntent`
 - `<skill_name> <json>` → `SkillInvocationIntent` (generic, for any registered skill)
 - Anything else → `UnsupportedIntent`
@@ -535,6 +538,7 @@ When Sparkstation is unavailable or returns unparseable JSON, the parser falls b
 
 ```bash
 kavi chat -m "summarize notes/ml.md"     # single-turn, prints AgentResponse JSON
+kavi chat -m "add to daily note: ..." --confirmed  # single-turn with pre-confirmed side effects
 kavi chat                                 # interactive REPL
 ```
 
@@ -603,7 +607,8 @@ src/kavi/
     ├── read_notes_by_tag.py # Skill (READ_ONLY)
     ├── summarize_note.py    # Skill (READ_ONLY, Sparkstation)
     ├── search_notes.py      # Skill (READ_ONLY, Sparkstation embeddings)
-    └── http_get_json.py     # Skill (NETWORK, SECRET_READ governance)
+    ├── http_get_json.py     # Skill (NETWORK, SECRET_READ governance)
+    └── create_daily_note.py # Skill (FILE_WRITE, append-mode daily notes)
 
 tests/
 ├── test_failure_drill.py  # Failure canon (see above)
