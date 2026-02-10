@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 430 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 445 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -478,10 +478,10 @@ The agent layer (`kavi.agent`) is a bounded conversational interface over truste
 | Intent | Kind | Execution |
 |--------|------|-----------|
 | Search and summarize | `search_and_summarize` | 2-step chain: `search_notes` → `summarize_note` |
-| Summarize a note | `summarize_note` | Single skill: `summarize_note` |
 | Write a note | `write_note` | Single skill: `write_note` (requires confirmation) |
+| Generic skill invocation | `skill_invocation` | Single skill by name (e.g. `summarize_note`, `http_get_json`) |
 
-Anything else returns `kind="unsupported"` with a help message.
+Anything else returns `kind="unsupported"` with a help message listing available commands and skills.
 
 ### Architecture
 
@@ -490,30 +490,37 @@ User message
     ↓
 parse_intent()    ← Sparkstation (one call) OR deterministic fallback
     ↓
-ParsedIntent      ← discriminated union: search_and_summarize | summarize_note | write_note | unsupported
+ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | unsupported
     ↓
 intent_to_plan()  ← purely deterministic, no LLM
     ↓
 PlannedAction     ← SkillAction (single skill) or ChainAction (ChainSpec)
+    ↓
+chat policy gate  ← blocks skills whose side-effect class isn't in allowed set
     ↓
 execute           ← consume_skill() or consume_chain()
     ↓
 AgentResponse     ← intent + plan + execution records + error
 ```
 
+### Chat policy gate
+
+`CHAT_DEFAULT_ALLOWED_EFFECTS` controls which side-effect classes the chat layer will execute. Currently: `{READ_ONLY, FILE_WRITE}`. Skills with `NETWORK` or `SECRET_READ` effects are blocked by default — callers must explicitly opt in via the `allowed_effects` parameter.
+
 ### Side-effect confirmation
 
 - **READ_ONLY** skills execute immediately.
-- **FILE_WRITE** skills require explicit confirmation:
+- **FILE_WRITE**, **NETWORK**, and **SECRET_READ** skills require explicit confirmation:
   - Single-turn mode (`kavi chat -m "..."`): returns `needs_confirmation=true` without executing.
   - REPL mode: prompts the user and proceeds only on "yes".
 
 ### Parser fallback
 
 When Sparkstation is unavailable or returns unparseable JSON, the parser falls back to deterministic heuristics:
-- `summarize <path>` → `SummarizeNoteIntent`
+- `summarize <path>` → `SkillInvocationIntent(summarize_note)`
 - `write <title>\n<body>` → `WriteNoteIntent`
 - `search/find <query>` → `SearchAndSummarizeIntent`
+- `<skill_name> <json>` → `SkillInvocationIntent` (generic, for any registered skill)
 - Anything else → `UnsupportedIntent`
 
 ### CLI
