@@ -225,6 +225,8 @@ The consumer shim (`kavi.consumer.shim`) is the runtime interface for downstream
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `execution_id` | str | Unique ID (uuid4 hex), auto-generated |
+| `parent_execution_id` | str \| None | Optional chain to a prior execution |
 | `skill_name` | str | Name of the executed skill |
 | `source_hash` | str | SHA256 hash verified at load time |
 | `side_effect_class` | str | Governance-declared side-effect class |
@@ -235,13 +237,32 @@ The consumer shim (`kavi.consumer.shim`) is the runtime interface for downstream
 | `started_at` | str | ISO 8601 UTC timestamp |
 | `finished_at` | str | ISO 8601 UTC timestamp |
 
+### Execution log persistence
+
+Every `consume-skill` invocation appends its `ExecutionRecord` to an append-only JSONL file (default `~/.kavi/executions.jsonl`). The `ExecutionLogWriter` in `consumer/log.py`:
+
+- Creates parent directories if missing.
+- Appends atomically via `open` + `O_APPEND` + `fsync`.
+- Never reads back; tolerates malformed existing lines.
+
+File format: one JSON object per line, matching the `ExecutionRecord` schema above. Example:
+
+```jsonl
+{"execution_id":"a1b2c3...","parent_execution_id":null,"skill_name":"write_note","source_hash":"357f...","side_effect_class":"FILE_WRITE","input_json":{...},"output_json":{...},"success":true,"error":null,"started_at":"2025-06-15T10:30:00+00:00","finished_at":"2025-06-15T10:30:01+00:00"}
+```
+
 ### CLI
 
 ```bash
-kavi consume-skill <name> --json '{"key": "value"}'
+kavi consume-skill <name> --json '{"key": "value"}'         # execute + log
+kavi consume-skill <name> --json '...' --log-path /tmp/x.jsonl  # custom log path
+kavi consume-skill <name> --json '...' --no-log             # skip logging
+
+kavi tail-executions                                         # last 20 records
+kavi tail-executions --n 5 --only-failures --skill write_note
 ```
 
-Prints the `ExecutionRecord` as JSON. Exits non-zero on failure.
+`consume-skill` prints the `ExecutionRecord` as JSON and appends to the log. Exits non-zero on failure. `tail-executions` reads and filters the JSONL log.
 
 ### Boundary
 
@@ -262,7 +283,8 @@ src/kavi/
 ├── artifacts/
 │   └── writer.py       # Content-addressed artifact writer
 ├── consumer/
-│   └── shim.py         # Consumer runtime: load, validate, execute, audit
+│   ├── shim.py         # Consumer runtime: load, validate, execute, audit
+│   └── log.py          # Append-only JSONL execution log
 ├── forge/
 │   ├── build.py        # Sandbox build, diff gate, Claude invocation
 │   ├── invariants.py   # Structural/scope/safety invariant checks

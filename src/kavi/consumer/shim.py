@@ -9,10 +9,11 @@ ExecutionRecord capturing provenance.
 from __future__ import annotations
 
 import datetime
+import uuid
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kavi.skills.loader import list_skills, load_skill
 
@@ -32,6 +33,8 @@ class SkillInfo(BaseModel):
 class ExecutionRecord(BaseModel):
     """Auditable record of a single skill execution."""
 
+    execution_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    parent_execution_id: str | None = None
     skill_name: str
     source_hash: str
     side_effect_class: str

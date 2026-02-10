@@ -357,8 +357,17 @@ def run_skill_cmd(
 def consume_skill_cmd(
     skill_name: str = typer.Argument(help="Name of the trusted skill to consume"),
     input_json: str = typer.Option(..., "--json", help="Input as JSON string"),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+    no_log: bool = typer.Option(
+        False, "--no-log", help="Disable execution logging",
+    ),
 ) -> None:
     """Execute a trusted skill and emit an auditable ExecutionRecord as JSON."""
+    from pathlib import Path
+
     from kavi.config import REGISTRY_PATH
     from kavi.consumer.shim import consume_skill
 
@@ -370,5 +379,49 @@ def consume_skill_cmd(
 
     record = consume_skill(REGISTRY_PATH, skill_name, raw_input)
     rprint(json.dumps(record.model_dump(), indent=2))
+
+    if not no_log:
+        from kavi.consumer.log import ExecutionLogWriter
+
+        writer = ExecutionLogWriter(Path(log_path) if log_path else None)
+        writer.append(record)
+
     if not record.success:
         raise typer.Exit(1)
+
+
+@app.command("tail-executions")
+def tail_executions_cmd(
+    n: int = typer.Option(20, "--n", "-n", help="Number of records"),
+    only_failures: bool = typer.Option(
+        False, "--only-failures", help="Show only failed executions",
+    ),
+    skill: str | None = typer.Option(
+        None, "--skill", help="Filter by skill name",
+    ),
+    log_path: str | None = typer.Option(
+        None, "--log-path",
+        help="JSONL log path. Default: ~/.kavi/executions.jsonl",
+    ),
+) -> None:
+    """Show recent execution records from the JSONL log."""
+    from pathlib import Path
+
+    from kavi.consumer.log import read_execution_log
+
+    records = read_execution_log(
+        path=Path(log_path) if log_path else None,
+        n=n,
+        only_failures=only_failures,
+        skill_name=skill,
+    )
+
+    if not records:
+        typer.echo("No matching execution records found.")
+        return
+
+    for rec in records:
+        status = "[green]OK[/green]" if rec.success else "[red]FAIL[/red]"
+        rprint(f"{rec.execution_id[:12]}  {status}  {rec.skill_name}  {rec.started_at}")
+        if rec.error:
+            rprint(f"  error: {rec.error}")

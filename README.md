@@ -85,7 +85,8 @@ kavi run-skill write_note --json '{"title": "Hello", "body": "World"}'
 | `kavi check-invariants <proposal_id>` | Run invariant checks standalone |
 | `kavi promote-skill <proposal_id>` | Promote to TRUSTED |
 | `kavi run-skill <name> --json '{...}'` | Run a TRUSTED skill |
-| `kavi consume-skill <name> --json '{...}'` | Execute a skill and emit an [ExecutionRecord](docs/ARCHITECTURE.md#consumer-shim) |
+| `kavi consume-skill <name> --json '{...}'` | Execute a skill, emit [ExecutionRecord](docs/ARCHITECTURE.md#consumer-shim), append to log |
+| `kavi tail-executions [--n N] [--only-failures] [--skill NAME]` | Show recent execution records from JSONL log |
 | `kavi list-skills` | List TRUSTED skills |
 | `kavi research-skill <build_id>` | Analyze a failed build |
 
