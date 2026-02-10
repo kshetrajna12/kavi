@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 301 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 331 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -452,6 +452,8 @@ When Sparkstation is unavailable or returns unparseable JSON, the parser falls b
 kavi chat -m "summarize notes/ml.md"     # single-turn, prints AgentResponse JSON
 kavi chat                                 # interactive REPL
 ```
+
+In the REPL, `search <query>` shows a compact table (rank, score, path, title). Use `search! <query>` to also include the top-result snippet. Full `AgentResponse` JSON is always printed after the table.
 
 ---
 

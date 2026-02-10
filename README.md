@@ -90,7 +90,7 @@ kavi run-skill write_note --json '{"title": "Hello", "body": "World"}'
 | `kavi search-and-summarize --query '...'` | Search notes + summarize top result (convenience chain) |
 | `kavi tail-executions [--n N] [--only-failures] [--skill NAME]` | Show recent execution records from JSONL log |
 | `kavi chat -m "..."` | Single-turn [chat](docs/ARCHITECTURE.md#chat-v0): parse intent, plan, execute, return AgentResponse JSON |
-| `kavi chat` | Interactive REPL with confirmation flow for FILE_WRITE skills |
+| `kavi chat` | Interactive REPL with confirmation flow for FILE_WRITE skills. `search!` prefix shows top snippet |
 | `kavi list-skills` | List TRUSTED skills |
 | `kavi research-skill <build_id>` | Analyze a failed build |
 
