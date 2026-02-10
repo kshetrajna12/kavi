@@ -18,6 +18,7 @@ from kavi.agent.models import (
     ParsedIntent,
     SearchAndSummarizeIntent,
     SkillInvocationIntent,
+    TransformIntent,
     UnsupportedIntent,
     WriteNoteIntent,
 )
@@ -43,10 +44,14 @@ these schemas:
     "input": {<matching the skill's input schema>},
     "warnings": ["..."]}
 
-4. Help / list skills / capabilities:
+4. Refine/correct a prior result (change a parameter):
+   {"kind": "transform", "overrides": {"field": "value"},
+    "target_ref": "last", "warnings": ["..."]}
+
+5. Help / list skills / capabilities:
    {"kind": "help", "warnings": ["..."]}
 
-5. Anything else:
+6. Anything else:
    {"kind": "unsupported",
     "message": "<explain what is supported>",
     "warnings": ["..."]}
@@ -67,6 +72,10 @@ add a warning for each ignored action.
 - For write_note, both title and body are required. If body is missing,
   still return write_note with an empty body string.
 - Omit the "warnings" field entirely if there are no warnings.
+- CORRECTIONS: If the user says "no, I meant", "but paragraph", "make it \
+shorter", "try X instead" — use "transform" with overrides containing the \
+changed fields. target_ref defaults to "last". Example: "but paragraph" → \
+{"kind": "transform", "overrides": {"style": "paragraph"}}.
 - REFERENCES: If the user says "that", "it", "the result", "again", or \
 refers to a prior result, use "ref:last" as the value for the relevant \
 input field. For example: "summarize that" becomes \
@@ -234,6 +243,20 @@ _SEARCH_AGAIN = re.compile(
     re.IGNORECASE,
 )
 
+# Corrections: "but paragraph", "make it bullet", "no, paragraph"
+_TRANSFORM_STYLE = re.compile(
+    r"^(?:no,?\s*|actually,?\s*)?(?:I\s+meant\s+|make\s+it\s+|but\s+)?"
+    r"(paragraph|bullet)\s*(?:style)?$",
+    re.IGNORECASE,
+)
+
+# Corrections: "try notes/ml.md instead", "no, notes/ml.md"
+_TRANSFORM_PATH = re.compile(
+    r"^(?:no,?\s*|actually,?\s*)?(?:I\s+meant\s+|try\s+)?"
+    r"(\S+\.md)\s*(?:instead)?$",
+    re.IGNORECASE,
+)
+
 # "again" or "do it again" with optional style override
 _AGAIN_REF = re.compile(
     r"^(?:do\s+it\s+)?again(?:\s+(paragraph|bullet))?$",
@@ -265,6 +288,14 @@ def _detect_ref_pattern(msg: str, lower: str) -> ParsedIntent | None:
                 "body": "ref:last_body",
             },
         )
+
+    m = _TRANSFORM_STYLE.match(lower)
+    if m:
+        return TransformIntent(overrides={"style": m.group(1).lower()})
+
+    m = _TRANSFORM_PATH.match(lower)
+    if m:
+        return TransformIntent(overrides={"path": m.group(1)})
 
     m = _SEARCH_REF.match(lower)
     if m:
@@ -388,6 +419,8 @@ def _dict_to_intent(data: dict) -> ParsedIntent:
         return WriteNoteIntent(**data)
     if kind == "skill_invocation":
         return SkillInvocationIntent(**data)
+    if kind == "transform":
+        return TransformIntent(**data)
     if kind == "help":
         return HelpIntent()
     # Backward compat: LLM may still emit summarize_note → convert

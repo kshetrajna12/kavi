@@ -12,6 +12,7 @@ from kavi.agent.models import (
     SearchAndSummarizeIntent,
     SessionContext,
     SkillInvocationIntent,
+    TransformIntent,
     WriteNoteIntent,
     _extract_anchor_data,
 )
@@ -516,6 +517,98 @@ class TestResolveSearchRef:
         assert result.query == "ml"
 
 
+# ── Resolve TransformIntent ───────────────────────────────────────────
+
+
+class TestResolveTransform:
+    """resolve_refs handles TransformIntent by re-invoking with overrides."""
+
+    def test_transform_style_override(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "aaa",
+                {"path": "notes/ml.md", "summary": "ML is great"},
+            ),
+        ]
+        intent = TransformIntent(overrides={"style": "paragraph"})
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.skill_name == "summarize_note"
+        assert result.input["path"] == "notes/ml.md"
+        assert result.input["style"] == "paragraph"
+
+    def test_transform_path_override(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "aaa",
+                {"path": "notes/old.md", "summary": "Old stuff"},
+            ),
+        ]
+        intent = TransformIntent(overrides={"path": "notes/new.md"})
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.skill_name == "summarize_note"
+        assert result.input["path"] == "notes/new.md"
+
+    def test_transform_after_search(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor("search_notes", "aaa", {"query": "ml"}),
+            _anchor(
+                "summarize_note", "bbb",
+                {"path": "notes/ml.md", "summary": "s"},
+            ),
+        ]
+        intent = TransformIntent(overrides={"style": "paragraph"})
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
+        assert isinstance(result, SkillInvocationIntent)
+        # Target is last anchor (summarize_note)
+        assert result.skill_name == "summarize_note"
+        assert result.input["style"] == "paragraph"
+
+    def test_transform_no_session_passes_through(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        intent = TransformIntent(overrides={"style": "paragraph"})
+        result = resolve_refs(intent, None)
+        # Without session, transform passes through unresolved
+        assert isinstance(result, TransformIntent)
+
+    def test_transform_no_anchors_returns_ambiguity(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        intent = TransformIntent(overrides={"style": "paragraph"})
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
+        assert isinstance(result, AmbiguityResponse)
+        assert "no prior results" in result.message.lower()
+
+    def test_transform_filters_to_valid_input_fields(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "aaa",
+                {"path": "a.md", "summary": "s"},
+            ),
+        ]
+        intent = TransformIntent(overrides={"style": "bullet"})
+        result = resolve_refs(intent, ctx, skills=SKILL_INFOS)
+        assert isinstance(result, SkillInvocationIntent)
+        # "summary" is an output field, not input — should be filtered
+        assert "summary" not in result.input
+        assert result.input["path"] == "a.md"
+
+
 # ── Resolve "again" and "write that" ─────────────────────────────────
 
 
@@ -818,6 +911,53 @@ class TestParserRefPatterns:
         assert isinstance(intent, SearchAndSummarizeIntent)
         assert intent.query == "kubernetes"
         assert "ref:" not in intent.query
+
+    # ── TransformIntent patterns ──────────────────────────────────────
+
+    def test_but_paragraph(self) -> None:
+        intent = self._parse("but paragraph")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"style": "paragraph"}
+
+    def test_but_bullet(self) -> None:
+        intent = self._parse("but bullet")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"style": "bullet"}
+
+    def test_make_it_paragraph(self) -> None:
+        intent = self._parse("make it paragraph")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"style": "paragraph"}
+
+    def test_no_paragraph(self) -> None:
+        intent = self._parse("no, paragraph")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"style": "paragraph"}
+
+    def test_actually_bullet(self) -> None:
+        intent = self._parse("actually, bullet")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"style": "bullet"}
+
+    def test_try_path_instead(self) -> None:
+        intent = self._parse("try notes/ml.md instead")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"path": "notes/ml.md"}
+
+    def test_no_path(self) -> None:
+        intent = self._parse("no, notes/other.md")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"path": "notes/other.md"}
+
+    def test_i_meant_paragraph(self) -> None:
+        intent = self._parse("I meant paragraph")
+        assert isinstance(intent, TransformIntent)
+        assert intent.overrides == {"style": "paragraph"}
+
+    def test_transform_default_target_is_last(self) -> None:
+        intent = self._parse("but paragraph")
+        assert isinstance(intent, TransformIntent)
+        assert intent.target_ref == "last"
 
     def test_summarize_real_path_not_ref(self) -> None:
         """'summarize notes/ml.md' should NOT match ref pattern."""

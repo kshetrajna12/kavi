@@ -19,6 +19,7 @@ from kavi.agent.models import (
     ParsedIntent,
     SessionContext,
     SkillAction,
+    TransformIntent,
     UnsupportedIntent,
     WriteNoteIntent,
 )
@@ -87,6 +88,15 @@ def handle_message(
                 session=session,
             )
         intent = resolved
+
+    # 2c. TransformIntent without session → error
+    if isinstance(intent, TransformIntent) and session is None:
+        return AgentResponse(
+            intent=intent,
+            warnings=warnings,
+            error="Cannot apply correction — no session context. "
+            "Use the REPL for multi-turn workflows.",
+        )
 
     # 3. Check for unsupported
     if isinstance(intent, UnsupportedIntent):

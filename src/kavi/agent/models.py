@@ -169,6 +169,18 @@ class SkillInvocationIntent(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class TransformIntent(BaseModel):
+    """Refine/correct the last execution with field overrides.
+
+    LLM proposes overrides; runtime binds target deterministically
+    from session anchors. Resolver converts to SkillInvocationIntent.
+    """
+
+    kind: Literal["transform"] = "transform"
+    overrides: dict[str, Any] = Field(default_factory=dict)
+    target_ref: str = "last"
+
+
 class HelpIntent(BaseModel):
     kind: Literal["help"] = "help"
 
@@ -182,6 +194,7 @@ ParsedIntent = (
     SearchAndSummarizeIntent
     | WriteNoteIntent
     | SkillInvocationIntent
+    | TransformIntent
     | HelpIntent
     | UnsupportedIntent
 )

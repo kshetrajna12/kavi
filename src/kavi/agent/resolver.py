@@ -15,6 +15,7 @@ from kavi.agent.models import (
     SearchAndSummarizeIntent,
     SessionContext,
     SkillInvocationIntent,
+    TransformIntent,
     note_path_for_title,
 )
 from kavi.consumer.shim import ExecutionRecord, SkillInfo
@@ -137,6 +138,37 @@ def _resolve_write_that(
     )
 
 
+def _resolve_transform(
+    intent: TransformIntent,
+    session: SessionContext,
+    skills: list[SkillInfo],
+) -> SkillInvocationIntent | AmbiguityResponse:
+    """Resolve a transform — re-invoke target skill with overrides applied."""
+    anchor = session.resolve(intent.target_ref)
+    if anchor is None:
+        return AmbiguityResponse(
+            ref=intent.target_ref,
+            candidates=[],
+            message=f"Could not resolve '{intent.target_ref}' — no prior results "
+            "to reference. Try running a command first.",
+        )
+
+    # Copy anchor data fields that are valid inputs for the skill
+    allowed = _input_fields_for(anchor.skill_name, skills)
+    new_input: dict[str, Any] = {}
+    for key, val in anchor.data.items():
+        if allowed is None or key in allowed:
+            new_input[key] = val
+
+    # Apply overrides
+    new_input.update(intent.overrides)
+
+    return SkillInvocationIntent(
+        skill_name=anchor.skill_name,
+        input=new_input,
+    )
+
+
 def resolve_refs(
     intent: ParsedIntent,
     session: SessionContext | None,
@@ -173,6 +205,10 @@ def resolve_refs(
                 query=value, top_k=intent.top_k, style=intent.style,
             )
         return intent
+
+    # TransformIntent: re-invoke target skill with overrides
+    if isinstance(intent, TransformIntent):
+        return _resolve_transform(intent, session, skills or [])
 
     if not isinstance(intent, SkillInvocationIntent):
         return intent
