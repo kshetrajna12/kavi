@@ -186,6 +186,24 @@ uv run mypy                   # Type check
 
 ---
 
+## Failure Canon
+
+The failure canon (`tests/test_failure_drill.py`) is a deterministic drill suite that exercises the research → retry loop across every failure class. Each drill engineers a specific, realistic defect — a forbidden import, an unused variable, a failing test, a gate violation — and proves that the forge classifies it correctly, produces a research note, and self-corrects on the next attempt without permission widening.
+
+| Drill | FailureKind | Defect |
+|-------|-------------|--------|
+| VERIFY_LINT | `VERIFY_LINT` | Unused import triggers ruff F401 |
+| VERIFY_TYPE | `VERIFY_LINT` | Stubbed mypy failure |
+| VERIFY_TEST | `VERIFY_TEST` | Stubbed pytest failure |
+| VERIFY_POLICY | `VERIFY_POLICY` | `import subprocess` triggers policy scanner |
+| GATE_VIOLATION | `GATE_VIOLATION` | Disallowed file in diff gate |
+
+Each drill follows the same arc: propose → build₁ → write flawed code → verify₁ (FAIL) → research (classify + facts) → build₂ (enriched packet) → write fixed code → verify₂ (PASS) → promote (TRUSTED). The gate violation drill fails at the build stage rather than verification, exercising a different code path.
+
+A `DrillRunner` provides selective real tooling — ruff, the policy scanner, and invariant checks always run against real code — while mypy and pytest are stubbed for speed and determinism. This is proof, not aspiration: the canon runs in the default test suite on every commit.
+
+---
+
 ## Project layout
 
 ```
@@ -212,9 +230,12 @@ src/kavi/
 └── skills/
     ├── base.py         # BaseSkill ABC
     ├── loader.py       # Registry loader + trust verification
-    └── write_note.py   # Example skill (FILE_WRITE)
+    ├── write_note.py        # Skill (FILE_WRITE)
+    └── read_notes_by_tag.py # Skill (READ_ONLY)
 
-tests/                  # See test markers above
+tests/
+├── test_failure_drill.py  # Failure canon (see above)
+└── ...                    # See test markers above
 docs/
 ├── ARCHITECTURE.md     # This file
 └── decisions.md        # Append-only decision log (D001–D011)

@@ -37,7 +37,7 @@ propose  →  build  →  verify  →  promote  →  run
 4. **Promote** — elevate to TRUSTED; hash the source file and record it in the registry.
 5. **Run** — load the skill at runtime, re-verify the hash, execute with validated input/output.
 
-Failed builds enter a research → retry loop: a deterministic classifier extracts failure kind and facts, and an optional LLM advisory proposes a corrected build packet. Escalation triggers require human review.
+Failed builds enter a research → retry loop: a deterministic classifier extracts failure kind and facts, and an optional LLM advisory proposes a corrected build packet. Escalation triggers require human review. Kavi includes a deterministic research → retry loop that has been exercised across all failure classes.
 
 For implementation details, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). For design rationale, see the [append-only decision log](docs/decisions.md).
 
