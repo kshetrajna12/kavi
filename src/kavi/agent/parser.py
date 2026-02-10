@@ -244,19 +244,25 @@ def _detect_ref_pattern(msg: str, lower: str) -> ParsedIntent | None:
 
     m = _WRITE_REF.match(lower)
     if m:
+        # "write that" → write_note with summary from last result as body
         return SkillInvocationIntent(
             skill_name="write_note",
-            input={"path": "ref:last", "body": "ref:last"},
+            input={
+                "path": "ref:last_written_path",
+                "title": "ref:last_title",
+                "body": "ref:last_body",
+            },
         )
 
     m = _AGAIN_REF.match(lower)
     if m:
+        # "again" → re-invoke the last skill with its input
         style = m.group(1)
-        inp: dict[str, Any] = {"path": "ref:last"}
+        inp: dict[str, Any] = {"ref:again": "true"}
         if style:
             inp["style"] = style
         return SkillInvocationIntent(
-            skill_name="summarize_note",
+            skill_name="ref:last_skill",
             input=inp,
         )
 

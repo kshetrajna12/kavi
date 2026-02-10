@@ -249,6 +249,29 @@ class TestResolve:
         ctx = self._ctx_with_anchors()
         assert ctx.resolve("last_write") is None
 
+    def test_last_skill_exact_match_preferred(self) -> None:
+        """Exact match beats startswith/contains."""
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor("search", "aaa"),
+            _anchor("search_notes", "bbb"),
+        ]
+        a = ctx.resolve("last_search")
+        assert a is not None
+        # Exact match on "search" is preferred over startswith "search_notes"
+        assert a.execution_id == "aaa"
+
+    def test_last_skill_startswith_before_contains(self) -> None:
+        """startswith match beats contains."""
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor("note_search", "aaa"),  # contains "search"
+            _anchor("search_notes", "bbb"),  # startswith "search"
+        ]
+        a = ctx.resolve("last_search")
+        assert a is not None
+        assert a.execution_id == "bbb"
+
     def test_case_insensitive(self) -> None:
         ctx = self._ctx_with_anchors()
         a = ctx.resolve("LAST")
@@ -402,6 +425,132 @@ class TestResolver:
         assert result.input["path"] == "x.md"
 
 
+# ── Resolve "again" and "write that" ─────────────────────────────────
+
+
+class TestResolveAgain:
+    """resolve_refs handles 'again' by re-invoking last skill."""
+
+    def test_again_re_invokes_last_skill(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "search_notes", "aaa",
+                {"query": "ml"},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="ref:last_skill",
+            input={"ref:again": "true"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.skill_name == "search_notes"
+        assert result.input["query"] == "ml"
+
+    def test_again_with_style_override(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "bbb",
+                {"path": "a.md", "summary": "s"},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="ref:last_skill",
+            input={"ref:again": "true", "style": "paragraph"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.skill_name == "summarize_note"
+        assert result.input["style"] == "paragraph"
+        assert result.input["path"] == "a.md"
+
+    def test_again_no_anchors_returns_ambiguity(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()  # empty
+        intent = SkillInvocationIntent(
+            skill_name="ref:last_skill",
+            input={"ref:again": "true"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, AmbiguityResponse)
+        assert "again" in result.message.lower()
+
+
+class TestResolveWriteThat:
+    """resolve_refs handles 'write that' by writing last result."""
+
+    def test_write_that_from_search(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "search_notes", "aaa",
+                {"query": "ml"},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="write_note",
+            input={
+                "path": "ref:last_written_path",
+                "title": "ref:last_title",
+                "body": "ref:last_body",
+            },
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.skill_name == "write_note"
+        assert result.input["title"] == "Notes: ml"
+        assert "ml" in result.input["body"]
+
+    def test_write_that_from_summarize(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "bbb",
+                {"path": "notes/ml.md", "summary": "Great notes"},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="write_note",
+            input={
+                "path": "ref:last_written_path",
+                "title": "ref:last_title",
+                "body": "ref:last_body",
+            },
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.skill_name == "write_note"
+        assert result.input["body"] == "Great notes"
+        assert "ml.md" in result.input["title"]
+
+    def test_write_that_no_anchors_returns_ambiguity(self) -> None:
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()  # empty
+        intent = SkillInvocationIntent(
+            skill_name="write_note",
+            input={
+                "path": "ref:last_written_path",
+                "title": "ref:last_title",
+                "body": "ref:last_body",
+            },
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, AmbiguityResponse)
+        assert "write that" in result.message.lower()
+
+
 # ── Extract anchors helper ────────────────────────────────────────────
 
 
@@ -493,28 +642,32 @@ class TestParserRefPatterns:
         intent = self._parse("write that")
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "write_note"
-        assert intent.input["path"] == "ref:last"
+        # Parser emits ref:last_* fields for resolver to handle
+        assert intent.input["body"] == "ref:last_body"
 
     def test_write_that_to_a_note(self) -> None:
         intent = self._parse("write that to a note")
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "write_note"
+        assert intent.input["title"] == "ref:last_title"
 
     def test_again(self) -> None:
         intent = self._parse("again")
         assert isinstance(intent, SkillInvocationIntent)
-        assert intent.input["path"] == "ref:last"
+        assert intent.skill_name == "ref:last_skill"
+        assert intent.input["ref:again"] == "true"
 
     def test_do_it_again(self) -> None:
         intent = self._parse("do it again")
         assert isinstance(intent, SkillInvocationIntent)
-        assert intent.input["path"] == "ref:last"
+        assert intent.skill_name == "ref:last_skill"
+        assert intent.input["ref:again"] == "true"
 
     def test_again_paragraph(self) -> None:
         intent = self._parse("again paragraph")
         assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "ref:last_skill"
         assert intent.input["style"] == "paragraph"
-        assert intent.input["path"] == "ref:last"
 
     def test_summarize_real_path_not_ref(self) -> None:
         """'summarize notes/ml.md' should NOT match ref pattern."""

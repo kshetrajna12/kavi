@@ -98,13 +98,16 @@ class SessionContext(BaseModel):
 
         if ref_lower.startswith("last_"):
             skill_suffix = ref_lower[5:]  # after "last_"
+            # Priority: exact > startswith > contains
+            # Check each tier fully before falling through
             for anchor in reversed(self.anchors):
-                # Match skill name or common short names
-                if (
-                    anchor.skill_name == skill_suffix
-                    or anchor.skill_name.startswith(skill_suffix)
-                    or skill_suffix in anchor.skill_name
-                ):
+                if anchor.skill_name == skill_suffix:
+                    return anchor
+            for anchor in reversed(self.anchors):
+                if anchor.skill_name.startswith(skill_suffix):
+                    return anchor
+            for anchor in reversed(self.anchors):
+                if skill_suffix in anchor.skill_name:
                     return anchor
             return None
 
