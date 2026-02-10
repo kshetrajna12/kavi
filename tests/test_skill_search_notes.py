@@ -153,6 +153,17 @@ class TestHelpers:
     def test_extract_title_leading_whitespace(self) -> None:
         assert extract_title("  # Indented Heading\n\nBody") == "Indented Heading"
 
+    def test_extract_title_literal_escaped_newlines(self) -> None:
+        # File written with literal \n instead of real newlines
+        raw = r"# Meeting Notes\n\nDiscussed architecture.\n- Item 1"
+        assert extract_title(raw) == "Meeting Notes"
+
+    def test_extract_title_literal_escaped_newline_no_leakage(self) -> None:
+        raw = r"# Title\nBody content here"
+        result = extract_title(raw)
+        assert result == "Title"
+        assert r"\n" not in result
+
     def test_has_tag_present(self) -> None:
         assert _has_tag("Some text #work here", "work") is True
 

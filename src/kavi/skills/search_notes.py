@@ -64,14 +64,22 @@ def extract_title(md_text: str) -> str | None:
       whitespace).
     - Strips the ``# `` prefix and surrounding whitespace.
     - Returns ``None`` if no H1 exists or the extracted text is empty.
-    - Guaranteed single-line: ``\\n`` / ``\\r`` are never in the result.
+    - Guaranteed single-line: real ``\\n``/``\\r`` and literal escape
+      sequences (``\\\\n``, ``\\\\r``) are treated as title boundaries.
     """
     for line in md_text.splitlines():
         stripped = line.strip()
         if stripped.startswith("# "):
             title = stripped[2:].strip()
-            # Enforce single-line — should already be one line, but guard
+            # Enforce single-line — strip real newlines
             title = title.replace("\r", "").replace("\n", "")
+            # Also truncate at literal escape sequences (files written with
+            # escaped newlines instead of real ones, e.g. "Title\\nBody")
+            for sep in (r"\n", r"\r"):
+                pos = title.find(sep)
+                if pos != -1:
+                    title = title[:pos]
+            title = title.strip()
             return title if title else None
     return None
 
