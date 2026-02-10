@@ -13,14 +13,17 @@ from typing import Literal
 from kavi.agent.constants import CHAT_DEFAULT_ALLOWED_EFFECTS, CONFIRM_SIDE_EFFECTS
 from kavi.agent.models import (
     AgentResponse,
+    AmbiguityResponse,
     ChainAction,
     HelpIntent,
+    SessionContext,
     SkillAction,
     UnsupportedIntent,
     WriteNoteIntent,
 )
 from kavi.agent.parser import parse_intent
 from kavi.agent.planner import intent_to_plan
+from kavi.agent.resolver import extract_anchors, resolve_refs
 from kavi.consumer.chain import consume_chain
 from kavi.consumer.log import ExecutionLogWriter
 from kavi.consumer.shim import ExecutionRecord, SkillInfo, consume_skill, get_trusted_skills
@@ -34,6 +37,7 @@ def handle_message(
     confirmed: bool = False,
     parse_mode: Literal["llm", "deterministic"] = "llm",
     allowed_effects: frozenset[str] | None = None,
+    session: SessionContext | None = None,
 ) -> AgentResponse:
     """Process a single user message and return an auditable response.
 
@@ -51,6 +55,8 @@ def handle_message(
                          Defaults to CHAT_DEFAULT_ALLOWED_EFFECTS
                          (READ_ONLY, FILE_WRITE). Pass a broader set
                          to enable NETWORK or SECRET_READ skills.
+        session: Optional session context for reference resolution (D015).
+                 None = stateless mode (backward compatible).
     """
     if allowed_effects is None:
         allowed_effects = CHAT_DEFAULT_ALLOWED_EFFECTS
@@ -69,10 +75,23 @@ def handle_message(
     # 2. Parse intent
     intent, warnings = parse_intent(message, skills, mode=parse_mode)
 
+    # 2b. Resolve references (D015)
+    if session is not None and not isinstance(intent, (UnsupportedIntent, HelpIntent)):
+        resolved = resolve_refs(intent, session)
+        if isinstance(resolved, AmbiguityResponse):
+            return AgentResponse(
+                intent=intent,
+                warnings=warnings,
+                error=resolved.message,
+                session=session,
+            )
+        intent = resolved
+
     # 3. Check for unsupported
     if isinstance(intent, UnsupportedIntent):
         return AgentResponse(
             intent=intent, warnings=warnings, error=intent.message,
+            session=session if session is not None else None,
         )
 
     # 3b. Help — return skills index, no planning needed
@@ -84,6 +103,7 @@ def handle_message(
             intent=intent,
             warnings=warnings,
             help_text=format_index(index),
+            session=session if session is not None else None,
         )
 
     # 4. Plan
@@ -93,6 +113,7 @@ def handle_message(
             intent=intent,
             warnings=warnings,
             error="Could not create a plan for this intent.",
+            session=session if session is not None else None,
         )
 
     # 5. Chat policy — block skills whose side-effect class isn't allowed
@@ -106,6 +127,7 @@ def handle_message(
             error=f"Skill blocked by chat policy "
             f"(side-effect class not allowed: {classes}). "
             f"Use run-skill or consume-skill for direct invocation.",
+            session=session if session is not None else None,
         )
 
     # 6. Write with empty body — prompt user instead of executing
@@ -120,6 +142,7 @@ def handle_message(
             needs_confirmation=True,
             warnings=warnings,
             error="No body provided. Use the REPL for multi-line input.",
+            session=session if session is not None else None,
         )
 
     # 7. Check confirmation for side-effect skills
@@ -129,6 +152,7 @@ def handle_message(
             plan=plan,
             needs_confirmation=True,
             warnings=warnings,
+            session=session if session is not None else None,
         )
 
     # 8. Execute
@@ -140,6 +164,7 @@ def handle_message(
             plan=plan,
             warnings=warnings,
             error=f"Execution error: {exc}",
+            session=session if session is not None else None,
         )
 
     # 9. Log
@@ -148,7 +173,12 @@ def handle_message(
         for rec in records:
             writer.append(rec)
 
-    # 10. Return
+    # 10. Build updated session (D015)
+    updated_session = None
+    if session is not None:
+        updated_session = extract_anchors(records, existing=session)
+
+    # 11. Return
     error = None
     if any(not r.success for r in records):
         failed = [r for r in records if not r.success]
@@ -160,6 +190,7 @@ def handle_message(
         records=records,
         warnings=warnings,
         error=error,
+        session=updated_session,
     )
 
 
