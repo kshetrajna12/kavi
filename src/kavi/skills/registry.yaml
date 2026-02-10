@@ -48,3 +48,12 @@ skills:
   - API_KEY
   version: 1.0.0
   hash: 65f38df9cd0e5a19831d941dc458c2bda180077387405b5dbd2c84add55ffc02
+- name: create_daily_note
+  module_path: kavi.skills.create_daily_note.CreateDailyNoteSkill
+  description: Create or append a timestamped entry to today's daily note in the vault
+  input_model: kavi.skills.create_daily_note.CreateDailyNoteInput
+  output_model: kavi.skills.create_daily_note.CreateDailyNoteOutput
+  side_effect_class: FILE_WRITE
+  required_secrets: []
+  version: 1.0.0
+  hash: 524cc570eb477bafa2a6c6254d4029a0af5b952904e1654703115e704dbb84a5

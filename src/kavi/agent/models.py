@@ -31,6 +31,7 @@ _ANCHOR_EXTRACTORS: dict[str, list[str]] = {
     "write_note": ["written_path"],
     "read_notes_by_tag": ["tag", "count"],
     "http_get_json": ["url"],
+    "create_daily_note": ["path", "date"],
 }
 
 

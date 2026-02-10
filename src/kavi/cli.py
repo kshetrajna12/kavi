@@ -520,6 +520,9 @@ def chat_cmd(
     no_log: bool = typer.Option(
         False, "--no-log", help="Disable execution logging",
     ),
+    confirmed: bool = typer.Option(
+        False, "--confirmed", help="Pre-confirm side-effect skills (single-turn)",
+    ),
 ) -> None:
     """Chat with Kavi — bounded conversational interface over trusted skills."""
     from pathlib import Path
@@ -535,6 +538,7 @@ def chat_cmd(
             message,
             registry_path=REGISTRY_PATH,
             log_path=effective_log,
+            confirmed=confirmed,
         )
         rprint(json.dumps(resp.model_dump(), indent=2))
         if resp.error:
