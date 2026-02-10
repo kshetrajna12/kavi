@@ -589,8 +589,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
     from kavi.agent.core import handle_message
 
-    rprint("[bold]Kavi Chat v0[/bold] — type 'quit' or Ctrl-D to exit")
-    rprint("Commands: help, search <query>, summarize <path>, write <title>\n")
+    rprint("[bold]Kavi Chat v0[/bold] — type 'help' for commands, 'quit' to exit\n")
 
     while True:
         try:

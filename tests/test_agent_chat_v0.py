@@ -14,6 +14,7 @@ from kavi.agent.core import CHAT_DEFAULT_ALLOWED_EFFECTS, handle_message
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
+    HelpIntent,
     ParsedIntent,
     SearchAndSummarizeIntent,
     SkillAction,
@@ -21,7 +22,7 @@ from kavi.agent.models import (
     UnsupportedIntent,
     WriteNoteIntent,
 )
-from kavi.agent.parser import parse_intent
+from kavi.agent.parser import _is_help_request, parse_intent
 from kavi.agent.planner import intent_to_plan
 from kavi.consumer.shim import SkillInfo
 from kavi.skills.base import BaseSkill, SkillInput, SkillOutput
@@ -999,3 +1000,159 @@ class TestExecutionLogging:
                 log_path=None,
             )
         assert resp.records  # executed, just not logged
+
+
+# ── HelpIntent parser tests ─────────────────────────────────────────
+
+
+class TestHelpPatterns:
+    """_is_help_request matches help/skills/capabilities patterns."""
+
+    def test_help(self) -> None:
+        assert _is_help_request("help")
+
+    def test_skills(self) -> None:
+        assert _is_help_request("skills")
+
+    def test_commands(self) -> None:
+        assert _is_help_request("commands")
+
+    def test_what_can_you_do(self) -> None:
+        assert _is_help_request("what can you do")
+
+    def test_what_can_you_do_question_mark(self) -> None:
+        assert _is_help_request("what can you do?")
+
+    def test_capabilities(self) -> None:
+        assert _is_help_request("capabilities")
+
+    def test_list_skills(self) -> None:
+        assert _is_help_request("list skills")
+
+    def test_show_skills(self) -> None:
+        assert _is_help_request("show skills")
+
+    def test_negative_help_me_write(self) -> None:
+        assert not _is_help_request("help me write")
+
+    def test_negative_search_skills(self) -> None:
+        assert not _is_help_request("search skills")
+
+    def test_negative_write_help_doc(self) -> None:
+        assert not _is_help_request("write help doc")
+
+    def test_negative_bare_text(self) -> None:
+        assert not _is_help_request("notes about machine learning")
+
+
+class TestHelpIntentDeterministic:
+    """Deterministic parser returns HelpIntent for help patterns."""
+
+    def _parse(self, msg: str) -> ParsedIntent:
+        intent, _ = parse_intent(msg, SKILL_INFOS, mode="deterministic")
+        return intent
+
+    def test_help(self) -> None:
+        assert isinstance(self._parse("help"), HelpIntent)
+
+    def test_skills(self) -> None:
+        assert isinstance(self._parse("skills"), HelpIntent)
+
+    def test_what_can_you_do(self) -> None:
+        assert isinstance(self._parse("what can you do?"), HelpIntent)
+
+    def test_commands(self) -> None:
+        assert isinstance(self._parse("commands"), HelpIntent)
+
+
+class TestHelpIntentLLM:
+    """LLM parser returns HelpIntent when LLM emits kind=help."""
+
+    def test_llm_help_kind(self) -> None:
+        llm = json.dumps({"kind": "help"})
+        with patch(_GEN, return_value=llm):
+            intent, _ = parse_intent("what can you do", SKILL_INFOS)
+        assert isinstance(intent, HelpIntent)
+
+
+class TestHelpIntentPlanner:
+    """Planner returns None for HelpIntent (handled by core)."""
+
+    def test_returns_none(self) -> None:
+        assert intent_to_plan(HelpIntent()) is None
+
+
+# ── HelpIntent integration tests ────────────────────────────────────
+
+
+class TestHandleMessageHelp:
+    """handle_message returns help_text for HelpIntent."""
+
+    def test_help_returns_help_text(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "help",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, HelpIntent)
+        assert resp.help_text is not None
+        assert "Available skills" in resp.help_text
+        assert resp.records == []
+        assert resp.plan is None
+        assert resp.error is None
+
+    def test_help_text_contains_skill_names(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "skills",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.help_text is not None
+        assert "search_notes" in resp.help_text
+        assert "write_note" in resp.help_text
+        assert "http_get_json" in resp.help_text
+
+    def test_help_text_shows_policy_groups(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "help",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.help_text is not None
+        assert "auto-execute" in resp.help_text
+        assert "confirmation" in resp.help_text
+        assert "Blocked" in resp.help_text
+
+    def test_help_no_confirmation_needed(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "help",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.needs_confirmation is False
+
+    def test_help_via_llm_mode(self) -> None:
+        llm = json.dumps({"kind": "help"})
+        with _ctx(llm_return=llm):
+            resp = handle_message(
+                "what can you do",
+                registry_path=FAKE_REGISTRY,
+            )
+        assert isinstance(resp.intent, HelpIntent)
+        assert resp.help_text is not None
+
+    def test_help_serializes_to_json(self) -> None:
+        with _ctx():
+            resp = handle_message(
+                "help",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        data = json.loads(resp.model_dump_json())
+        assert data["intent"]["kind"] == "help"
+        assert data["help_text"] is not None
+        assert data["records"] == []

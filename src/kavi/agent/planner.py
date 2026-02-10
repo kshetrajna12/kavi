@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kavi.agent.models import (
     ChainAction,
+    HelpIntent,
     ParsedIntent,
     PlannedAction,
     SearchAndSummarizeIntent,
@@ -33,7 +34,9 @@ def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
         return _plan_write(intent)
     if isinstance(intent, SkillInvocationIntent):
         return SkillAction(skill_name=intent.skill_name, input=intent.input)
-    if isinstance(intent, UnsupportedIntent):
+    # HelpIntent is handled by core.py before reaching the planner.
+    # Return None defensively so the caller gets a clear signal.
+    if isinstance(intent, (UnsupportedIntent, HelpIntent)):
         return None
     return None
 
