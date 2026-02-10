@@ -122,7 +122,7 @@ docs/
 ## Development
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 568 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 569 tests, no network)
 uv run ruff check src/ tests/ # Lint
 uv run mypy                   # Type check
 ```
