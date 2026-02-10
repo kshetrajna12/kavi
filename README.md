@@ -93,7 +93,8 @@ kavi run-skill write_note --json '{"title": "Hello", "body": "World"}'
 | `kavi session --execution-id <id>` / `--latest` | [Inspect an execution chain](docs/ARCHITECTURE.md#session-inspection) as a human-readable tree |
 | `kavi chat -m "..."` | Single-turn [chat](docs/ARCHITECTURE.md#chat-v0): parse intent, plan, execute, return AgentResponse JSON |
 | `kavi chat` | Interactive REPL with confirmation flow for FILE_WRITE/NETWORK/SECRET_READ skills. `search!` prefix shows top snippet |
-| `kavi list-skills` | List TRUSTED skills |
+| `kavi skills [--json]` | Show available skills with chat policy labels and example usage |
+| `kavi list-skills` | List TRUSTED skills (raw registry view) |
 | `kavi research-skill <build_id>` | Analyze a failed build |
 | `kavi doctor [--json]` | Healthcheck: paths, registry integrity, Sparkstation, toolchain, log sanity |
 
@@ -121,7 +122,7 @@ docs/
 ## Development
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 445 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 505 tests, no network)
 uv run ruff check src/ tests/ # Lint
 uv run mypy                   # Type check
 ```

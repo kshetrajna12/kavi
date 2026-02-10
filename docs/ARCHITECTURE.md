@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 445 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 505 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -480,6 +480,7 @@ The agent layer (`kavi.agent`) is a bounded conversational interface over truste
 | Search and summarize | `search_and_summarize` | 2-step chain: `search_notes` → `summarize_note` |
 | Write a note | `write_note` | Single skill: `write_note` (requires confirmation) |
 | Generic skill invocation | `skill_invocation` | Single skill by name (e.g. `summarize_note`, `http_get_json`) |
+| Help / skills listing | `help` | Returns formatted skills index (no execution) |
 
 Anything else returns `kind="unsupported"` with a help message listing available commands and skills.
 
@@ -490,7 +491,7 @@ User message
     ↓
 parse_intent()    ← Sparkstation (one call) OR deterministic fallback
     ↓
-ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | unsupported
+ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | help | unsupported
     ↓
 intent_to_plan()  ← purely deterministic, no LLM
     ↓
@@ -560,7 +561,8 @@ src/kavi/
 │   ├── core.py         # AgentCore: handle_message orchestrator
 │   ├── models.py       # ParsedIntent, PlannedAction, AgentResponse
 │   ├── parser.py       # LLM intent parser + deterministic fallback
-│   └── planner.py      # Deterministic intent-to-plan mapping
+│   ├── planner.py      # Deterministic intent-to-plan mapping
+│   └── skills_index.py # Registry-driven skill discoverability + formatting
 ├── artifacts/
 │   └── writer.py       # Content-addressed artifact writer
 ├── consumer/
