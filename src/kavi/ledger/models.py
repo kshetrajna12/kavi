@@ -242,7 +242,8 @@ def get_latest_verification(
     conn: sqlite3.Connection, proposal_id: str
 ) -> Verification | None:
     cursor = conn.execute(
-        "SELECT * FROM verifications WHERE proposal_id = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM verifications WHERE proposal_id = ?"
+        " ORDER BY created_at DESC, rowid DESC LIMIT 1",
         (proposal_id,),
     )
     row = cursor.fetchone()
