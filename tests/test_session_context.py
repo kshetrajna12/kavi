@@ -398,6 +398,88 @@ class TestExtractAnchors:
 
 # Reuse stubs from test_agent_chat_v0
 
+# ── Parser ref pattern tests ──────────────────────────────────────────
+
+from kavi.agent.parser import parse_intent
+
+
+class TestParserRefPatterns:
+    """Deterministic parser emits ref markers for 'that'/'it'/'again'."""
+
+    def _parse(self, msg: str) -> ParsedIntent:
+        from tests.test_agent_chat_v0 import SKILL_INFOS as _si
+        intent, _ = parse_intent(msg, _si, mode="deterministic")
+        return intent
+
+    def test_summarize_that(self) -> None:
+        intent = self._parse("summarize that")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
+        assert intent.input["path"] == "ref:last"
+
+    def test_summarize_it(self) -> None:
+        intent = self._parse("summarize it")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "ref:last"
+
+    def test_summarize_the_result(self) -> None:
+        intent = self._parse("summarize the result")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "ref:last"
+
+    def test_summarize_that_paragraph(self) -> None:
+        intent = self._parse("summarize that paragraph")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "ref:last"
+        assert intent.input["style"] == "paragraph"
+
+    def test_summarize_this(self) -> None:
+        intent = self._parse("summarize this")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "ref:last"
+
+    def test_write_that(self) -> None:
+        intent = self._parse("write that")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "write_note"
+        assert intent.input["path"] == "ref:last"
+
+    def test_write_that_to_a_note(self) -> None:
+        intent = self._parse("write that to a note")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "write_note"
+
+    def test_again(self) -> None:
+        intent = self._parse("again")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "ref:last"
+
+    def test_do_it_again(self) -> None:
+        intent = self._parse("do it again")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "ref:last"
+
+    def test_again_paragraph(self) -> None:
+        intent = self._parse("again paragraph")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["style"] == "paragraph"
+        assert intent.input["path"] == "ref:last"
+
+    def test_summarize_real_path_not_ref(self) -> None:
+        """'summarize notes/ml.md' should NOT match ref pattern."""
+        intent = self._parse("summarize notes/ml.md")
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.input["path"] == "notes/ml.md"
+        assert "ref:" not in intent.input["path"]
+
+    def test_write_real_title_not_ref(self) -> None:
+        """'write My Title' should NOT match ref pattern."""
+        from kavi.agent.models import WriteNoteIntent
+        intent = self._parse("write My Title")
+        assert isinstance(intent, WriteNoteIntent)
+        assert intent.title == "My Title"
+
+
 from tests.test_agent_chat_v0 import (
     FAKE_REGISTRY,
     SKILL_INFOS,

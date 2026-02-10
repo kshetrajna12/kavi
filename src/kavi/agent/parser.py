@@ -67,6 +67,12 @@ add a warning for each ignored action.
 - For write_note, both title and body are required. If body is missing,
   still return write_note with an empty body string.
 - Omit the "warnings" field entirely if there are no warnings.
+- REFERENCES: If the user says "that", "it", "the result", "again", or \
+refers to a prior result, use "ref:last" as the value for the relevant \
+input field. For example: "summarize that" becomes \
+{"kind": "skill_invocation", "skill_name": "summarize_note", \
+"input": {"path": "ref:last"}}. Use "ref:last_<skill>" to reference the \
+most recent result of a specific skill (e.g. "ref:last_search").
 """
 
 ParseMode = Literal["llm", "deterministic"]
@@ -126,6 +132,7 @@ def _deterministic_parse(
 
     Recognized prefixes:
     - summarize <path> [paragraph]  → SkillInvocationIntent(summarize_note)
+    - summarize that/it/the result  → SkillInvocationIntent with ref:last
     - write <title>\\n<body>         → WriteNoteIntent
     - search/find <query>           → SearchAndSummarizeIntent
     - <skill_name> <json>           → SkillInvocationIntent (generic)
@@ -138,6 +145,11 @@ def _deterministic_parse(
     # help / skills / what can you do
     if _is_help_request(lower):
         return HelpIntent()
+
+    # Reference detection: "summarize that/it/the result" → ref:last
+    ref_intent = _detect_ref_pattern(msg, lower)
+    if ref_intent is not None:
+        return ref_intent
 
     # "summarize <path>" [paragraph] → sugar for summarize_note skill
     if lower.startswith("summarize "):
@@ -190,6 +202,65 @@ def _deterministic_parse(
         f"search <query>, find <query>, summarize <path>, "
         f"write <title>{skill_names}",
     )
+
+
+# ── Reference detection (D015) ────────────────────────────────────────
+
+# Pronouns that refer to the most recent result
+_REF_PRONOUNS = {"that", "it", "the result", "this"}
+
+# Patterns: "summarize that [paragraph]", "write that to a note"
+_SUMMARIZE_REF = re.compile(
+    r"^summarize\s+(?:that|it|the\s+result|this)"
+    r"(?:\s+(paragraph|bullet))?$",
+    re.IGNORECASE,
+)
+
+_WRITE_REF = re.compile(
+    r"^write\s+(?:that|it|the\s+result|this)"
+    r"(?:\s+(?:to\s+)?(?:a\s+)?note)?$",
+    re.IGNORECASE,
+)
+
+# "again" or "do it again" with optional style override
+_AGAIN_REF = re.compile(
+    r"^(?:do\s+it\s+)?again(?:\s+(paragraph|bullet))?$",
+    re.IGNORECASE,
+)
+
+
+def _detect_ref_pattern(msg: str, lower: str) -> ParsedIntent | None:
+    """Detect reference patterns and return intent with ref markers.
+
+    Returns None if no ref pattern matched.
+    """
+    m = _SUMMARIZE_REF.match(lower)
+    if m:
+        style = m.group(1) or "bullet"
+        return SkillInvocationIntent(
+            skill_name="summarize_note",
+            input={"path": "ref:last", "style": style},
+        )
+
+    m = _WRITE_REF.match(lower)
+    if m:
+        return SkillInvocationIntent(
+            skill_name="write_note",
+            input={"path": "ref:last", "body": "ref:last"},
+        )
+
+    m = _AGAIN_REF.match(lower)
+    if m:
+        style = m.group(1)
+        inp: dict[str, Any] = {"path": "ref:last"}
+        if style:
+            inp["style"] = style
+        return SkillInvocationIntent(
+            skill_name="summarize_note",
+            input=inp,
+        )
+
+    return None
 
 
 _HELP_PATTERNS = re.compile(
