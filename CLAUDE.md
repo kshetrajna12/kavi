@@ -4,7 +4,7 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 
 ## Project Overview
 
-Kavi is a governed skill forge: propose → build → verify → promote → run. See `README.md` for full architecture. Key concepts:
+Kavi Forge is the governance and trust layer for self-building skills. See `README.md` for overview, `docs/ARCHITECTURE.md` for internals, `docs/decisions.md` for rationale. Key concepts:
 
 - **Ledger** (SQLite, schema v4) is the single source of truth (D002)
 - **Sandbox builds** (D009): Claude Code runs in `/tmp/kavi-build/`, diff allowlist gate
@@ -130,11 +130,11 @@ This ensures continuity across sessions without losing context.
 
 | If you changed... | Update... |
 |-------------------|-----------|
-| CLI commands | `README.md` (usage examples, CLI table) |
-| Database schema | `docs/decisions.md` (if schema choice changed) |
-| Architecture/data flow | `docs/decisions.md` + `README.md` (architecture section) |
+| CLI commands | `README.md` (CLI table) |
+| Database schema | `docs/ARCHITECTURE.md` (ledger section) + `docs/decisions.md` |
+| Build/verify/trust internals | `docs/ARCHITECTURE.md` |
 | Design decisions | `docs/decisions.md` |
-| New modules/packages | `README.md` (project layout) |
+| New modules/packages | `README.md` (project layout) + `docs/ARCHITECTURE.md` (project layout) |
 
 Documentation updates are part of completing work, not a separate task.
 
