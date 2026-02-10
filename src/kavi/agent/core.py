@@ -21,7 +21,7 @@ from kavi.agent.parser import parse_intent
 from kavi.agent.planner import intent_to_plan
 from kavi.consumer.chain import consume_chain
 from kavi.consumer.log import ExecutionLogWriter
-from kavi.consumer.shim import SkillInfo, consume_skill, get_trusted_skills
+from kavi.consumer.shim import ExecutionRecord, SkillInfo, consume_skill, get_trusted_skills
 
 # Side-effect classes that require user confirmation before execution
 _CONFIRM_SIDE_EFFECTS = {"FILE_WRITE", "NETWORK", "SECRET_READ"}
@@ -149,7 +149,7 @@ def _needs_confirmation(
     return False
 
 
-def _execute(plan: SkillAction | ChainAction, registry_path: Path):
+def _execute(plan: SkillAction | ChainAction, registry_path: Path) -> list[ExecutionRecord]:
     """Execute the planned action via the consumer layer."""
     if isinstance(plan, SkillAction):
         record = consume_skill(registry_path, plan.skill_name, plan.input)

@@ -4,7 +4,7 @@ Internal reference for the forge's implementation. For the high-level overview, 
 
 ---
 
-## Ledger (SQLite, schema v4)
+## Ledger (SQLite, schema v5)
 
 The ledger is the single source of truth ([D002](decisions.md)). All other representations (registry YAML, markdown artifacts) are derived.
 
@@ -25,7 +25,7 @@ The ledger is the single source of truth ([D002](decisions.md)). All other repre
 
 ### Migrations
 
-SQLite cannot `ALTER CHECK` constraints, so migrations that widen enum-like checks recreate the table (see migration 3 and 4 patterns in `ledger/db.py`).
+SQLite cannot `ALTER CHECK` constraints, so migrations that widen enum-like checks recreate the table (see migration 3, 4, and 5 patterns in `ledger/db.py`).
 
 ---
 
@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 362 tests, no network)
+uv run pytest -q              # Fast suite (~3s, 430 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -225,7 +225,7 @@ The consumer shim (`kavi.consumer.shim`) is the runtime interface for downstream
 - No planning, tool selection, or LLM involvement
 - No memory or conversation state
 - No permission widening or policy changes
-- No NETWORK side effects
+- No autonomous NETWORK side effects (NETWORK skills require user confirmation)
 
 ### ExecutionRecord
 
@@ -429,6 +429,7 @@ kavi session --execution-id abc123... --json # raw JSON records instead of tree
 | `read_notes_by_tag` | READ_ONLY | Find notes matching a tag |
 | `summarize_note` | READ_ONLY | Summarize a vault note via Sparkstation with graceful fallback |
 | `search_notes` | READ_ONLY | Semantic search over vault notes via bge-large embeddings with lexical fallback |
+| `http_get_json` | NETWORK | Fetch JSON from a URL via stdlib urllib.request (D013: SECRET_READ governance) |
 
 ### summarize_note
 
@@ -570,7 +571,7 @@ src/kavi/
 │   ├── research.py     # Failure classification + LLM advisory
 │   └── verify.py       # 5-gate verification
 ├── ledger/
-│   ├── db.py           # Schema, migrations (v1→v4)
+│   ├── db.py           # Schema, migrations (v1→v5)
 │   └── models.py       # Pydantic models + DB operations
 ├── llm/
 │   └── spark.py        # Sparkstation client (generate + embed)
@@ -584,12 +585,13 @@ src/kavi/
     ├── write_note.py        # Skill (FILE_WRITE)
     ├── read_notes_by_tag.py # Skill (READ_ONLY)
     ├── summarize_note.py    # Skill (READ_ONLY, Sparkstation)
-    └── search_notes.py      # Skill (READ_ONLY, Sparkstation embeddings)
+    ├── search_notes.py      # Skill (READ_ONLY, Sparkstation embeddings)
+    └── http_get_json.py     # Skill (NETWORK, SECRET_READ governance)
 
 tests/
 ├── test_failure_drill.py  # Failure canon (see above)
 └── ...                    # See test markers above
 docs/
 ├── ARCHITECTURE.md     # This file
-└── decisions.md        # Append-only decision log (D001–D012)
+└── decisions.md        # Append-only decision log (D001–D013)
 ```

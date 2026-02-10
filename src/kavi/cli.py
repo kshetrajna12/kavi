@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from pathlib import Path
 from rich import print as rprint
 from rich.table import Table
 
@@ -557,7 +561,7 @@ def format_search_results(output_json: dict, verbose: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
+def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
     from kavi.agent.core import handle_message
 

@@ -6,7 +6,7 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 
 Kavi Forge is the governance and trust layer for self-building skills. See `README.md` for overview, `docs/ARCHITECTURE.md` for internals, `docs/decisions.md` for rationale. Key concepts:
 
-- **Ledger** (SQLite, schema v4) is the single source of truth (D002)
+- **Ledger** (SQLite, schema v5) is the single source of truth (D002)
 - **Sandbox builds** (D009): Claude Code runs in `/tmp/kavi-build/`, diff allowlist gate
 - **Research/retry** (D011): deterministic classifier + optional LLM advisory via Sparkstation
 - **Trust chain** (D010): hash verified at runtime via `load_skill()`
@@ -30,13 +30,13 @@ src/kavi/llm/        # Sparkstation client (spark.py)
 src/kavi/skills/     # BaseSkill ABC, loader (trust verification), skill implementations
 src/kavi/policies/   # Policy scanner (forbidden imports, eval/exec)
 src/kavi/config.py   # All path constants + Sparkstation config (SPARK_*)
-docs/decisions.md    # Append-only decision log (D001–D011)
+docs/decisions.md    # Append-only decision log (D001–D013)
 ```
 
 ## Testing
 
 ```bash
-uv run pytest -q                  # Fast suite (~3s, 116+ tests, no network)
+uv run pytest -q                  # Fast suite (~3s, 430 tests, no network)
 uv run pytest -m slow             # Integration tests (real subprocesses)
 uv run pytest -m spark            # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/     # Lint

@@ -109,7 +109,8 @@ def _llm_parse(
         prompt = _build_prompt(message, skills)
         raw = generate(prompt)
         data = _parse_json_response(raw)
-        warnings = data.pop("warnings", None) or []
+        raw_warnings = data.pop("warnings", None)
+        warnings: list[str] = list(raw_warnings) if isinstance(raw_warnings, list) else []
         return ParseResult(_dict_to_intent(data), warnings)
     except SparkUnavailableError:
         return ParseResult(_deterministic_parse(message), [])
@@ -176,14 +177,15 @@ def _build_prompt(message: str, skills: list[SkillInfo]) -> str:
     )
 
 
-def _parse_json_response(raw: str) -> dict:
+def _parse_json_response(raw: str) -> dict[str, object]:
     """Extract JSON from LLM response, tolerating markdown fences."""
     text = raw.strip()
     if text.startswith("```"):
         lines = text.split("\n")
         lines = [x for x in lines if not x.strip().startswith("```")]
         text = "\n".join(lines).strip()
-    return json.loads(text)
+    result: dict[str, object] = json.loads(text)
+    return result
 
 
 def _dict_to_intent(data: dict) -> ParsedIntent:
