@@ -529,8 +529,25 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
             rprint("Bye.")
             return
 
+        # Multi-line input for write commands
+        message = line
+        if line.lower().startswith("write"):
+            try:
+                rprint("[dim](enter body, then blank line to finish)[/dim]")
+                body_lines = []
+                while True:
+                    body_line = input("  ... ")
+                    if not body_line.strip():
+                        break
+                    body_lines.append(body_line)
+                if body_lines:
+                    message = line + "\n" + "\n".join(body_lines)
+            except (EOFError, KeyboardInterrupt):
+                rprint("\nBye.")
+                return
+
         resp = handle_message(
-            line,
+            message,
             registry_path=registry_path,
             log_path=log_path,
         )
@@ -544,7 +561,7 @@ def _chat_repl(registry_path, log_path) -> None:  # noqa: ANN001
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
                 resp = handle_message(
-                    line,
+                    message,
                     registry_path=registry_path,
                     log_path=log_path,
                     confirmed=True,
