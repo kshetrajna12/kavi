@@ -464,13 +464,13 @@ Semantic search over vault markdown files using Sparkstation `bge-large` embeddi
 
 ## Chat v0
 
-The agent layer (`kavi.agent`) is a bounded conversational interface over trusted skills. It is NOT an autonomous agent — it executes at most one action per user message, has no memory across turns, and never retries.
+The agent layer (`kavi.agent`) is a bounded conversational interface over trusted skills. It is NOT an autonomous agent — it executes at most one action per user message and never retries.
 
 ### Boundaries
 
 - **At most one execution per message**: either a single `consume_skill` call, or a fixed 2-step `consume_chain` (search → summarize).
 - **No loops, no retries, no multi-step planning.**
-- **Stateless**: the REPL is just UI; the core (`handle_message`) takes a message and returns a response.
+- **Anchor-based session context (D015)**: the REPL maintains a sliding window of up to 10 anchors from prior execution results. Users can refer to previous results with "that", "it", "again", `ref:last`, or `ref:last_<skill>`. In single-turn mode (`kavi chat -m`), no session is maintained.
 - **Transparent**: every response includes the parsed intent, planned action, and execution records.
 
 ### Supported intents (v0)
@@ -490,8 +490,10 @@ Anything else returns `kind="unsupported"` with a help message listing available
 User message
     ↓
 parse_intent()    ← Sparkstation (one call) OR deterministic fallback
-    ↓
+    ↓                (detects ref patterns: "that"/"it"/"again" → ref:last)
 ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | help | unsupported
+    ↓
+resolve_refs()    ← binds ref:last / ref:last_<skill> to anchor values (D015)
     ↓
 intent_to_plan()  ← purely deterministic, no LLM
     ↓
@@ -501,7 +503,9 @@ chat policy gate  ← blocks skills whose side-effect class isn't in allowed set
     ↓
 execute           ← consume_skill() or consume_chain()
     ↓
-AgentResponse     ← intent + plan + execution records + error
+extract_anchors() ← updates session with new anchors from execution records
+    ↓
+AgentResponse     ← intent + plan + records + session + error
 ```
 
 ### Chat policy gate
@@ -519,7 +523,10 @@ AgentResponse     ← intent + plan + execution records + error
 
 When Sparkstation is unavailable or returns unparseable JSON, the parser falls back to deterministic heuristics:
 - `summarize <path>` → `SkillInvocationIntent(summarize_note)`
+- `summarize that/it/the result` → `SkillInvocationIntent` with `ref:last` (D015)
 - `write <title>\n<body>` → `WriteNoteIntent`
+- `write that [to a note]` → `SkillInvocationIntent(write_note)` with `ref:last` (D015)
+- `again [paragraph]` / `do it again` → re-run with `ref:last` (D015)
 - `search/find <query>` → `SearchAndSummarizeIntent`
 - `<skill_name> <json>` → `SkillInvocationIntent` (generic, for any registered skill)
 - Anything else → `UnsupportedIntent`
@@ -559,9 +566,10 @@ src/kavi/
 ├── config.py           # Path constants + Sparkstation config
 ├── agent/
 │   ├── core.py         # AgentCore: handle_message orchestrator
-│   ├── models.py       # ParsedIntent, PlannedAction, AgentResponse
-│   ├── parser.py       # LLM intent parser + deterministic fallback
+│   ├── models.py       # ParsedIntent, PlannedAction, AgentResponse, SessionContext
+│   ├── parser.py       # LLM intent parser + deterministic fallback + ref detection
 │   ├── planner.py      # Deterministic intent-to-plan mapping
+│   ├── resolver.py     # Reference resolver: resolve_refs, extract_anchors (D015)
 │   └── skills_index.py # Registry-driven skill discoverability + formatting
 ├── artifacts/
 │   └── writer.py       # Content-addressed artifact writer
