@@ -61,6 +61,9 @@ def propose_skill_cmd(
     io_schema_json: str = typer.Option(
         ..., "--io-schema-json", help="I/O schema as JSON string"
     ),
+    required_secrets_json: str = typer.Option(
+        "[]", "--required-secrets", help="Required secret env var names as JSON list"
+    ),
 ) -> None:
     """Create a new skill proposal."""
     from kavi.config import ARTIFACTS_OUT
@@ -75,9 +78,16 @@ def propose_skill_cmd(
         typer.echo(f"Valid: {', '.join(e.value for e in SideEffectClass)}")
         raise typer.Exit(1)
 
+    try:
+        secrets = json.loads(required_secrets_json)
+    except json.JSONDecodeError as e:
+        typer.echo(f"Invalid --required-secrets JSON: {e}")
+        raise typer.Exit(1)
+
     proposal, artifact = propose_skill(
         conn, name=name, description=desc,
         io_schema_json=io_schema_json, side_effect_class=sec,
+        required_secrets=secrets,
         output_dir=ARTIFACTS_OUT,
     )
     conn.close()

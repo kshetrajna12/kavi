@@ -16,6 +16,7 @@ class SideEffectClass(StrEnum):
     READ_ONLY = "READ_ONLY"
     FILE_WRITE = "FILE_WRITE"
     NETWORK = "NETWORK"
+    SECRET_READ = "SECRET_READ"
     MONEY = "MONEY"
     MESSAGING = "MESSAGING"
 

@@ -252,3 +252,34 @@ The skill + test files remain **required** (gate fails if missing). The runtime 
 - Build packet template updated to inform Claude Code about optional files
 
 ---
+
+## D013: Secrets and network governance (2026-02-10)
+
+**Status:** `CURRENT`
+
+**Context:** Kavi has four shipped skills (all READ_ONLY or FILE_WRITE). The next skill (`http_get_json`) needs to make network requests and read API keys from environment variables. The governance layer had no support for SECRET_READ as a side-effect class, no mechanism to surface required secrets through the registry, and no detection of accidental secret leaks in skill code.
+
+**Decision:** Multi-layered governance for secrets and network skills:
+
+1. **SECRET_READ enum value** — added to `SideEffectClass`, schema v5 migration (table recreate for CHECK constraint, established pattern from v3/v4).
+
+2. **Required secrets surfacing** — `SkillProposal.required_secrets_json` already existed but promote hardcoded `"required_secrets": []` in the registry. Fixed to propagate `json.loads(proposal.required_secrets_json)`. `SkillInfo` in consumer shim now exposes `required_secrets: list[str]`.
+
+3. **Secret-leak detection** — Best-effort AST rule (`secret_leak`) in policy scanner. Detects `print(os.environ[...])`, `print(os.getenv(...))`, and f-string interpolation of env vars in print/log calls. Always-on, not configurable. Cannot track variable flow (by design — catches obvious patterns).
+
+4. **Confirmation gate expansion** — `_CONFIRM_SIDE_EFFECTS` in agent core expanded from `{FILE_WRITE}` to `{FILE_WRITE, NETWORK, SECRET_READ}`. Both network and secret access require explicit user consent.
+
+5. **CLI flag** — `--required-secrets` added to `kavi propose-skill` (JSON list of env var names).
+
+**HTTP library choice:** `urllib.request` (stdlib). No new dependency needed.
+
+**Rationale:** Each layer catches a different failure mode: enum/schema prevents invalid proposals, required_secrets makes secrets visible in the registry, leak detection catches careless print statements, confirmation gate requires user consent for risky operations. Together they enable network+secret skills while maintaining governed capability growth (D004).
+
+**Implication:**
+- Schema version 5 (migration required for existing DBs)
+- `propose-skill` CLI accepts `--required-secrets`
+- Policy scanner now has `secret_leak` rule (always-on)
+- Agent chat confirms NETWORK and SECRET_READ skills before execution
+- `http_get_json` can be proposed with `--side-effect NETWORK --required-secrets '["API_KEY"]'`
+
+---

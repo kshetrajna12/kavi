@@ -28,6 +28,7 @@ class SkillInfo(BaseModel):
     source_hash: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
+    required_secrets: list[str] = []
 
 
 class ExecutionRecord(BaseModel):
@@ -66,6 +67,7 @@ def get_trusted_skills(registry_path: Path) -> list[SkillInfo]:
                 source_hash=entry.get("hash", ""),
                 input_schema=skill.input_model.model_json_schema(),
                 output_schema=skill.output_model.model_json_schema(),
+                required_secrets=entry.get("required_secrets", []),
             )
         )
     return result

@@ -78,7 +78,30 @@ class _Visitor(ast.NodeVisitor):
                     rule="forbid_dynamic_exec",
                     detail=f"Call to {name}() is forbidden",
                 ))
+        self._check_secret_leak(node)
         self.generic_visit(node)
+
+    def _check_secret_leak(self, node: ast.Call) -> None:
+        """Detect print/log calls that leak environment variable values.
+
+        Catches patterns like:
+        - print(os.environ["KEY"])
+        - print(os.getenv("KEY"))
+        - print(f"...{os.environ['KEY']}...")
+        - logging.info(os.getenv("KEY"))
+        """
+        name = _call_name(node)
+        if name not in ("print", "info", "warning", "error", "debug", "log"):
+            return
+        for arg in (*node.args, *(kw.value for kw in node.keywords)):
+            if _contains_env_access(arg):
+                self.violations.append(PolicyViolation(
+                    file=self.filename,
+                    line=node.lineno,
+                    rule="secret_leak",
+                    detail="Possible secret leak: env var value passed to "
+                           f"{name}()",
+                ))
 
     def _check_import(self, module_name: str, lineno: int) -> None:
         for forbidden in self.policy.forbidden_imports:
@@ -97,6 +120,46 @@ def _call_name(node: ast.Call) -> str | None:
     if isinstance(node.func, ast.Attribute):
         return node.func.attr
     return None
+
+
+def _is_env_access(node: ast.expr) -> bool:
+    """Check if node is os.environ[...] or os.getenv(...)."""
+    # os.environ["KEY"] or os.environ.get("KEY")
+    if isinstance(node, ast.Subscript):
+        val = node.value
+        if (
+            isinstance(val, ast.Attribute)
+            and val.attr == "environ"
+            and isinstance(val.value, ast.Name)
+            and val.value.id == "os"
+        ):
+            return True
+    # os.getenv("KEY")
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "getenv"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "os"
+        ):
+            return True
+    return False
+
+
+def _contains_env_access(node: ast.expr) -> bool:
+    """Recursively check if an expression contains env var access."""
+    if _is_env_access(node):
+        return True
+    # Check f-string interpolation: f"...{os.environ['KEY']}..."
+    if isinstance(node, ast.JoinedStr):
+        for val in node.values:
+            if isinstance(val, ast.FormattedValue) and _contains_env_access(val.value):
+                return True
+    # Direct call argument
+    if isinstance(node, ast.Call):
+        return _is_env_access(node)
+    return False
 
 
 # Also do a simple regex scan for patterns that AST might miss

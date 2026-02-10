@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS skill_proposals (
@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS skill_proposals (
     description TEXT NOT NULL,
     io_schema_json TEXT NOT NULL,
     side_effect_class TEXT NOT NULL CHECK (
-        side_effect_class IN ('READ_ONLY', 'FILE_WRITE', 'NETWORK', 'MONEY', 'MESSAGING')
+        side_effect_class IN ('READ_ONLY', 'FILE_WRITE', 'NETWORK',
+                              'SECRET_READ', 'MONEY', 'MESSAGING')
     ),
     required_secrets_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'PROPOSED' CHECK (
@@ -125,6 +126,28 @@ MIGRATIONS: dict[int, list[str]] = {
         "INSERT INTO artifacts_new SELECT * FROM artifacts",
         "DROP TABLE artifacts",
         "ALTER TABLE artifacts_new RENAME TO artifacts",
+    ],
+    5: [
+        # Widen side_effect_class CHECK to include SECRET_READ (D013)
+        # SQLite cannot ALTER CHECK constraints, so recreate the table.
+        """CREATE TABLE skill_proposals_new (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            io_schema_json TEXT NOT NULL,
+            side_effect_class TEXT NOT NULL CHECK (
+                side_effect_class IN ('READ_ONLY', 'FILE_WRITE', 'NETWORK',
+                                      'SECRET_READ', 'MONEY', 'MESSAGING')
+            ),
+            required_secrets_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'PROPOSED' CHECK (
+                status IN ('PROPOSED', 'REJECTED', 'BUILT', 'VERIFIED', 'TRUSTED')
+            ),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        )""",
+        "INSERT INTO skill_proposals_new SELECT * FROM skill_proposals",
+        "DROP TABLE skill_proposals",
+        "ALTER TABLE skill_proposals_new RENAME TO skill_proposals",
     ],
 }
 

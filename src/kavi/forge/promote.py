@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
@@ -74,7 +75,7 @@ def promote_skill(
         "input_model": f"{mod_base}.{class_stem}Input",
         "output_model": f"{mod_base}.{class_stem}Output",
         "side_effect_class": proposal.side_effect_class.value,
-        "required_secrets": [],
+        "required_secrets": json.loads(proposal.required_secrets_json),
         "version": version,
         "hash": skill_hash,
     })
