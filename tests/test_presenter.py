@@ -5,6 +5,7 @@ from __future__ import annotations
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
+    ClarifyIntent,
     HelpIntent,
     PendingConfirmation,
     SearchAndSummarizeIntent,
@@ -284,6 +285,29 @@ class TestConversationalError:
         out = present(resp)
         assert "Cannot do that" in out
         assert "sorry" in out.lower() or "wrong" in out.lower()
+
+
+class TestConversationalClarify:
+    """ClarifyIntent shows question naturally, not as an error."""
+
+    def test_clarify_no_error_prefix(self) -> None:
+        resp = AgentResponse(
+            intent=ClarifyIntent(question="Which note would you like to summarize?"),
+            error="Which note would you like to summarize?",
+        )
+        out = present(resp)
+        assert "Which note would you like to summarize?" in out
+        assert "sorry" not in out.lower()
+        assert "wrong" not in out.lower()
+
+    def test_clarify_verbose_shows_intent(self) -> None:
+        resp = AgentResponse(
+            intent=ClarifyIntent(question="Did you mean X or Y?"),
+            error="Did you mean X or Y?",
+        )
+        out = present(resp, verbose=True)
+        assert "clarify" in out.lower()
+        assert "Did you mean X or Y?" in out
 
 
 class TestConversationalHelp:

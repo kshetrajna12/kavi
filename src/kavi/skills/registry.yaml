@@ -26,7 +26,7 @@ skills:
   side_effect_class: READ_ONLY
   required_secrets: []
   version: 1.0.0
-  hash: d31e5d5fcf559b125c7bdbddb61600b441a92ee29c6b19a4a9ae80dca81ad62a
+  hash: 84a83652385db12d0c50bbc0be3b3716ae1dba81c10992867cbc6ce160f873d1
 - name: search_notes
   module_path: kavi.skills.search_notes.SearchNotesSkill
   description: Semantic search over vault notes via Sparkstation bge-large embeddings

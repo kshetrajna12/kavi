@@ -21,6 +21,11 @@ if TYPE_CHECKING:
     from kavi.consumer.shim import ExecutionRecord
 
 
+def _is_clarify(resp: AgentResponse) -> bool:
+    """Check if the response is a clarification question."""
+    return getattr(resp.intent, "kind", "") == "clarify"
+
+
 def present(resp: AgentResponse, *, verbose: bool = False) -> str:
     """Format an AgentResponse as user-facing text.
 
@@ -55,6 +60,11 @@ def _present_conversational(resp: AgentResponse) -> str:
     # Confirmation needed
     if resp.pending is not None:
         parts.append(_format_confirmation(resp))
+        return "\n".join(parts)
+
+    # Clarification question (not an error)
+    if _is_clarify(resp):
+        parts.append(resp.error or "")
         return "\n".join(parts)
 
     # Error
