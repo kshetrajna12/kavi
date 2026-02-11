@@ -341,3 +341,36 @@ The skill + test files remain **required** (gate fails if missing). The runtime 
 - No structural changes to `kavi.agent` models for external format compatibility
 - Future HTTP API surface will have an adapter module (e.g. `kavi.api.adapters`) that translates between internal models and client wire formats
 - The adapter is a presentation concern, not a domain concern — it lives at the edge, not in `kavi.agent`
+
+---
+
+## D017: Chat Surface v1 — surface inversion with TalkIntent (2026-02-10)
+
+**Status:** `CURRENT`
+
+**Context:** Kavi Chat v0 was "a governed agent exposed through a CLI" — unmatched input returned errors, confirmations showed raw JSON, all output was structured/mechanical. Users wanted it to feel like a regular chatbot.
+
+**Decision:** Invert the surface: Kavi becomes "a regular chatbot powered by a governed agent." The engine (parse → plan → confirm → execute → log) stays unchanged. The presentation layer changes. Three structural additions:
+
+1. **TalkIntent (effect=NONE).** Default path when no skill matches. Generates conversational response via Sparkstation (graceful fallback to canned help text). Logged as ExecutionRecord with `skill_name="__talk__"`, `side_effect_class="NONE"`. Cannot call tools. May reference SessionContext anchors for context.
+
+2. **Presenter module (`kavi.agent.presenter`).** Template-based formatting for all response types — conversational confirmations ("I'll write this to your notes — okay?"), natural success messages, subtle error text. No LLM formatting pass for boilerplate. LLM is used only where it adds semantic value (TalkIntent, TransformIntent).
+
+3. **PendingConfirmation model.** Formalized confirmation stashing with plan + intent + session snapshot + TTL (5 minutes). `confirm_pending()` validates TTL then executes — no re-parse, no re-resolve. Replaces ad-hoc stashing in CLI code.
+
+**Guardrails (non-negotiable):**
+- Confirmation policy remains strictly mechanical: READ_ONLY auto-executes, FILE_WRITE/NETWORK/SECRET_READ require confirmation. Only the *phrasing* changes, never the *gates*.
+- `--verbose` / `/verbose` is load-bearing for inspectability (invariant #8). Must fully expose AgentResponse, plan, records, and session state.
+- Internal protocol remains canonical (D016 stands). Presenter is a boundary adapter.
+
+**Rationale:**
+1. Most user turns are conversation, not tool invocations. TalkIntent makes this a first-class concept instead of an error path.
+2. Template-based formatting avoids LLM latency and failure modes for routine output. LLM generation is reserved for where it adds value.
+3. Formalized stashing prevents re-parse bugs and enables TTL-based expiry for safety.
+4. Verbose mode preserves full inspectability — the governance engine is always visible on demand.
+
+**Implications:**
+- `UnsupportedIntent` now reserved for harmful/impossible requests (LLM only). Deterministic parser catch-all returns `TalkIntent`.
+- New pseudo-skill `__talk__` appears in execution logs and session anchors.
+- REPL version string changes from "Kavi Chat v0" to "Kavi Chat".
+- `kavi chat --verbose` and REPL `/verbose` command for full detail mode.
