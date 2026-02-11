@@ -137,8 +137,11 @@ compose, draft, generate, or create content (e.g. "write a poem about X", \
 content to a file. "add that to my daily notes" saves to daily notes.
 - The distinction: "write a poem about dogs" → talk. \
 "write that to a note" → invoke_skill(write_note).
-- REFERENCES: If the user says "that", "it", "the result", use "ref:last" \
-as the value. For skill-specific refs, use "ref:last_<skill>".
+- REFERENCES: If the user says "that", "it", "the result", "this", \
+"all of this", "the above", "what you said", use "ref:last" as the value. \
+For skill-specific refs, use "ref:last_<skill>". \
+When saving/writing content the user is referring to, set body to "ref:last" \
+— NEVER echo the user's instruction back as the body.
 - For CORRECTIONS ("but paragraph", "make it shorter", "try X instead"), \
 use invoke_skill with the corrected parameters and "ref:last" for unchanged fields.
 - For search/find queries, use invoke_skill with skill_name "search_notes" \
@@ -220,7 +223,7 @@ def _llm_parse(
             {"role": "user", "content": message},
         ]
         result = generate_tool_call(messages, TOOLS)
-        return _tool_call_to_intent(result.name, result.arguments)
+        return _tool_call_to_intent(result.name, result.arguments, message)
     except SparkUnavailableError:
         return ParseResult(_deterministic_parse(message, skills), [])
     except (SparkError, KeyError, TypeError, ValueError, ValidationError):
@@ -228,7 +231,7 @@ def _llm_parse(
 
 
 def _tool_call_to_intent(
-    tool_name: str, args: dict[str, Any],
+    tool_name: str, args: dict[str, Any], raw_message: str = "",
 ) -> ParseResult:
     """Convert a tool call result to an internal intent."""
     if tool_name == "talk":
@@ -253,10 +256,16 @@ def _tool_call_to_intent(
                 [],
             )
         if skill_name == "write_note":
+            body = inp.get("body", "")
+            # Strip body if the LLM echoed the user's instruction back
+            # instead of using ref:last.  The auto-bind in core.py will
+            # fill it from session context.
+            if body and raw_message and _body_is_instruction(body, raw_message):
+                body = ""
             return ParseResult(
                 WriteNoteIntent(
                     title=inp.get("title", ""),
-                    body=inp.get("body", ""),
+                    body=body,
                 ),
                 [],
             )
@@ -283,6 +292,24 @@ def _tool_call_to_intent(
         TalkIntent(message=args.get("message", "")),
         [],
     )
+
+
+def _body_is_instruction(body: str, raw_message: str) -> bool:
+    """Return True if body looks like the user's instruction echoed back.
+
+    Small LLMs sometimes set body to the raw user message instead of
+    using ref:last.  Detect this so auto-bind in core.py can fill the
+    body from session context instead.
+    """
+    b = body.strip().lower()
+    m = raw_message.strip().lower()
+    # Exact match or body is a substring of the instruction
+    if b == m or m.startswith(b) or b.startswith(m):
+        return True
+    # Instruction-like: starts with "write" and contains "note"
+    if b.startswith("write") and "note" in b:
+        return True
+    return False
 
 
 # ── Deterministic fallback (frozen D018) ─────────────────────────────

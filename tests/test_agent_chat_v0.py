@@ -421,6 +421,45 @@ class TestParserLLMSuccess:
         assert intent.title == "Test"
         assert intent.body == "Hello world"
 
+    def test_write_note_strips_echoed_instruction(self) -> None:
+        """LLM echoing user instruction as body → stripped to empty."""
+        msg = "write all of this into a note called indianapolis.md"
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "Indianapolis", "body": msg},
+        })
+        with patch(_GEN, return_value=tc):
+            intent, _ = parse_intent(msg, SKILL_INFOS)
+        assert isinstance(intent, WriteNoteIntent)
+        assert intent.title == "Indianapolis"
+        assert intent.body == ""
+
+    def test_write_note_keeps_real_body(self) -> None:
+        """Legitimate body content is preserved."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "Test", "body": "Some actual content here"},
+        })
+        with patch(_GEN, return_value=tc):
+            intent, _ = parse_intent(
+                "write a note called Test with content", SKILL_INFOS,
+            )
+        assert isinstance(intent, WriteNoteIntent)
+        assert intent.body == "Some actual content here"
+
+    def test_write_note_ref_last_preserved(self) -> None:
+        """ref:last body is not stripped."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "Notes", "body": "ref:last"},
+        })
+        with patch(_GEN, return_value=tc):
+            intent, _ = parse_intent(
+                "write that to a note", SKILL_INFOS,
+            )
+        assert isinstance(intent, WriteNoteIntent)
+        assert intent.body == "ref:last"
+
     def test_harmful_request_routes_to_talk(self) -> None:
         """Harmful requests → talk with polite refusal (D019: no unsupported tool)."""
         tc = ToolCallResult("talk", {
