@@ -178,7 +178,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~8s, 723 tests, no network)
+uv run pytest -q              # Fast suite (~8s, 731 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -620,5 +620,5 @@ tests/
 └── ...                    # See test markers above
 docs/
 ├── ARCHITECTURE.md     # This file
-└── decisions.md        # Append-only decision log (D001–D018)
+└── decisions.md        # Append-only decision log (D001–D020)
 ```

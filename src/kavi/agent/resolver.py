@@ -322,5 +322,6 @@ def extract_anchors(
     ctx = SessionContext()
     if existing is not None:
         ctx.anchors = list(existing.anchors)
+        ctx.messages = list(existing.messages)  # preserve D020 history
     ctx.add_from_records(records)
     return ctx

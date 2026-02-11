@@ -1275,6 +1275,140 @@ class TestWriteNoteIntentRefResolution:
         assert isinstance(result, AmbiguityResponse)
 
 
+# ── D020: Message history tests ──────────────────────────────────────
+
+
+class TestMessageHistoryAccumulation:
+    """SessionContext add_chat_turn/add_tool_turn and sliding window (D020)."""
+
+    def test_add_chat_turn_basic(self) -> None:
+        ctx = SessionContext()
+        ctx.add_chat_turn("hello", "hi there")
+        assert len(ctx.messages) == 2
+        assert ctx.messages[0] == {"role": "user", "content": "hello"}
+        assert ctx.messages[1] == {"role": "assistant", "content": "hi there"}
+
+    def test_add_chat_turn_multiple(self) -> None:
+        ctx = SessionContext()
+        ctx.add_chat_turn("a", "b")
+        ctx.add_chat_turn("c", "d")
+        assert len(ctx.messages) == 4
+        assert ctx.messages[2]["content"] == "c"
+        assert ctx.messages[3]["content"] == "d"
+
+    def test_add_tool_turn_structure(self) -> None:
+        from kavi.llm.spark import ToolCallResult
+
+        ctx = SessionContext()
+        tc = ToolCallResult("search_notes", {"query": "ml"}, "call_1")
+        ctx.add_tool_turn("search ml", tc, '{"results":[]}', "No results found.")
+        assert len(ctx.messages) == 4
+        assert ctx.messages[0]["role"] == "user"
+        assert ctx.messages[1]["role"] == "assistant"
+        assert ctx.messages[1]["tool_calls"][0]["id"] == "call_1"
+        assert ctx.messages[1]["tool_calls"][0]["function"]["name"] == "search_notes"
+        assert ctx.messages[2]["role"] == "tool"
+        assert ctx.messages[2]["tool_call_id"] == "call_1"
+        assert ctx.messages[3]["role"] == "assistant"
+        assert ctx.messages[3]["content"] == "No results found."
+
+    def test_add_tool_turn_default_call_id(self) -> None:
+        from kavi.llm.spark import ToolCallResult
+
+        ctx = SessionContext()
+        tc = ToolCallResult("search_notes", {"query": "ml"})
+        ctx.add_tool_turn("search ml", tc, "{}", "ok")
+        assert ctx.messages[1]["tool_calls"][0]["id"] == "call_0"
+
+    def test_truncate_long_content(self) -> None:
+        from kavi.agent.models import MAX_TURN_CONTENT_CHARS
+
+        ctx = SessionContext()
+        long_msg = "x" * (MAX_TURN_CONTENT_CHARS + 500)
+        ctx.add_chat_turn(long_msg, "short")
+        assert len(ctx.messages[0]["content"]) == MAX_TURN_CONTENT_CHARS + 3  # + "..."
+        assert ctx.messages[0]["content"].endswith("...")
+
+    def test_sliding_window_chat_turns(self) -> None:
+        from kavi.agent.models import MAX_HISTORY_MESSAGES
+
+        ctx = SessionContext()
+        # Fill up beyond max
+        for i in range(MAX_HISTORY_MESSAGES):
+            ctx.add_chat_turn(f"user-{i}", f"asst-{i}")
+        assert len(ctx.messages) <= MAX_HISTORY_MESSAGES
+        # Most recent messages preserved
+        assert ctx.messages[-1]["content"].startswith("asst-")
+
+    def test_sliding_window_preserves_tool_groups(self) -> None:
+        from kavi.agent.models import MAX_HISTORY_MESSAGES
+        from kavi.llm.spark import ToolCallResult
+
+        ctx = SessionContext()
+        # Add many tool turns to exceed window
+        for i in range(MAX_HISTORY_MESSAGES):
+            tc = ToolCallResult("search_notes", {"query": f"q{i}"}, f"call_{i}")
+            ctx.add_tool_turn(f"search q{i}", tc, "{}", f"result-{i}")
+        assert len(ctx.messages) <= MAX_HISTORY_MESSAGES
+        # Verify no orphaned tool messages — every tool_calls has a matching tool
+        tool_call_ids = set()
+        tool_result_ids = set()
+        for m in ctx.messages:
+            if m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    tool_call_ids.add(tc["id"])
+            if m.get("role") == "tool":
+                tool_result_ids.add(m["tool_call_id"])
+        assert tool_call_ids == tool_result_ids
+
+    def test_sliding_window_preserves_system(self) -> None:
+        ctx = SessionContext()
+        ctx.messages = [{"role": "system", "content": "You are Kavi."}]
+        # Fill beyond max
+        for i in range(25):
+            ctx.add_chat_turn(f"user-{i}", f"asst-{i}")
+        assert ctx.messages[0]["role"] == "system"
+
+
+class TestExtractAnchorsPreservesMessages:
+    """extract_anchors must preserve D020 message history."""
+
+    def test_messages_preserved_after_extract(self) -> None:
+        from kavi.agent.resolver import extract_anchors
+
+        existing = SessionContext()
+        existing.anchors = [_anchor("s", "old1")]
+        existing.add_chat_turn("hello", "hi")
+        existing.add_chat_turn("search ml", "Found 3 results.")
+
+        records = [
+            _make_record(
+                "search_notes",
+                {"query": "q", "results": []},
+                execution_id="new1",
+            ),
+        ]
+        ctx = extract_anchors(records, existing=existing)
+        # Anchors preserved
+        assert len(ctx.anchors) == 2
+        # Messages preserved
+        assert len(ctx.messages) == 4  # 2 chat turns = 4 messages
+        assert ctx.messages[0]["content"] == "hello"
+
+    def test_messages_empty_when_no_existing(self) -> None:
+        from kavi.agent.resolver import extract_anchors
+
+        records = [
+            _make_record(
+                "search_notes",
+                {"query": "q", "results": []},
+                execution_id="new1",
+            ),
+        ]
+        ctx = extract_anchors(records, existing=None)
+        assert ctx.messages == []
+
+
 class TestWriteNoteAutoBindFromSession:
     """handle_message auto-binds empty write_note body from session (D018)."""
 
