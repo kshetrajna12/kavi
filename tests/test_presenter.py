@@ -220,15 +220,15 @@ class TestConversationalSuccess:
     def test_write_note_done(self) -> None:
         rec = _record("write_note", {
             "written_path": "vault_out/a.md",
-            "title": "My Note",
+            "sha256": "abc123",
         })
         resp = AgentResponse(
             intent=WriteNoteIntent(title="My Note", body="hi"),
             records=[rec],
         )
         out = present(resp)
-        assert "My Note" in out
-        assert "Done" in out or "wrote" in out.lower()
+        assert "vault_out/a.md" in out
+        assert "Done" in out
 
     def test_daily_note_done(self) -> None:
         rec = _record("create_daily_note", {

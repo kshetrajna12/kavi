@@ -137,8 +137,8 @@ def _format_single_record(rec: ExecutionRecord) -> str:
         return f"Summarized {path}."
 
     if rec.skill_name == "write_note":
-        title = out.get("title", "")
-        return f"Done — wrote '{title}'."
+        path = out.get("written_path", "")
+        return f"Done — wrote {path}."
 
     if rec.skill_name == "create_daily_note":
         return "Added to today's daily note."
