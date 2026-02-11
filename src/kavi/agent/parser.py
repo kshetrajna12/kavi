@@ -97,9 +97,9 @@ notes, or anything that doesn't clearly require a skill, use "talk".
 shorter", "try X instead" — use "transform" with overrides containing the \
 changed fields. target_ref defaults to "last". Example: "but paragraph" → \
 {"kind": "transform", "overrides": {"style": "paragraph"}}.
-- REFERENCES: If the user says "that", "it", "the result", "again", or \
-refers to a prior result, use "ref:last" as the value for the relevant \
-input field. For example: "summarize that" becomes \
+- REFERENCES: If the user says "that", "this", "it", "the result", \
+"again", or refers to a prior result, use "ref:last" as the value for \
+the relevant input field. For example: "summarize that" becomes \
 {"kind": "skill_invocation", "skill_name": "summarize_note", \
 "input": {"path": "ref:last"}}. Use "ref:last_<skill>" to reference the \
 most recent result of a specific skill (e.g. "ref:last_search").

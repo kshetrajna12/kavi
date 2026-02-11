@@ -1271,3 +1271,37 @@ class TestWriteNoteIntentRefResolution:
         intent = WriteNoteIntent(title="My Note", body="ref:last")
         result = resolve_refs(intent, ctx)
         assert isinstance(result, AmbiguityResponse)
+
+
+class TestWriteNoteAutoBindFromSession:
+    """handle_message auto-binds empty write_note body from session (D018)."""
+
+    def test_empty_body_binds_talk_anchor(self) -> None:
+        """LLM returns empty body but session has Talk anchor → auto-bind."""
+        from unittest.mock import patch
+
+        from kavi.agent.parser import ParseResult
+
+        poem = "A poem about dogs in the park."
+        session = SessionContext()
+        session.anchors = [
+            _anchor("__talk__", "aaa", {"response": poem}),
+        ]
+
+        # Mock parser to return WriteNoteIntent with empty body
+        # (simulates LLM not emitting ref:last)
+        intent = WriteNoteIntent(title="dog_poem", body="")
+        mock_parse = ParseResult(intent, [])
+
+        with _ctx():
+            with patch("kavi.agent.core.parse_intent", return_value=mock_parse):
+                resp = handle_message(
+                    "write this into dog_poem.md",
+                    registry_path=FAKE_REGISTRY,
+                    session=session,
+                    confirmed=True,
+                )
+        # Should have auto-bound the body from the Talk anchor
+        assert resp.records
+        assert resp.records[0].success
+        assert resp.records[0].input_json["body"] == poem

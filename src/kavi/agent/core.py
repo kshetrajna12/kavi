@@ -156,24 +156,33 @@ def handle_message(
             session=session if session is not None else None,
         )
 
-    # 6. Write with empty body — prompt user instead of executing
-    if (
-        isinstance(intent, WriteNoteIntent)
-        and not intent.body
-        and not confirmed
-    ):
-        return AgentResponse(
-            intent=intent,
-            plan=plan,
-            needs_confirmation=True,
-            pending=PendingConfirmation(
-                plan=plan, intent=intent,
-                session=session, warnings=warnings or [],
-            ),
-            warnings=warnings,
-            error="No body provided. Use the REPL for multi-line input.",
-            session=session if session is not None else None,
-        )
+    # 6. Write with empty body — try to auto-bind from session, else prompt
+    if isinstance(intent, WriteNoteIntent) and not intent.body:
+        # Defensive: if the LLM didn't emit ref:last but there's a recent
+        # Talk/summarize anchor, bind it automatically.  Small LLMs often
+        # fail to produce ref markers reliably.
+        if session and session.anchors:
+            from kavi.agent.resolver import _content_anchor_value
+
+            last_anchor = session.anchors[-1]
+            content = _content_anchor_value(last_anchor)
+            if content:
+                intent = WriteNoteIntent(title=intent.title, body=content)
+                plan = intent_to_plan(intent)
+
+        if not intent.body and not confirmed:
+            return AgentResponse(
+                intent=intent,
+                plan=plan,
+                needs_confirmation=True,
+                pending=PendingConfirmation(
+                    plan=plan, intent=intent,
+                    session=session, warnings=warnings or [],
+                ),
+                warnings=warnings,
+                error="No body provided. Use the REPL for multi-line input.",
+                session=session if session is not None else None,
+            )
 
     # 7. Check confirmation for side-effect skills
     if not confirmed and _needs_confirmation(plan, skills):
