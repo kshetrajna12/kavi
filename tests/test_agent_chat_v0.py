@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import ExitStack
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1336,3 +1337,288 @@ class TestExecutePlan:
         assert len(resp2.records) == 1
         assert resp2.records[0].success
         assert resp2.records[0].skill_name == "write_note"
+
+
+# ── PendingConfirmation + confirm_pending tests ──────────────────────
+
+
+class TestPendingConfirmation:
+    """Formalized confirmation stashing with TTL enforcement."""
+
+    def test_handle_message_populates_pending(self) -> None:
+        """needs_confirmation responses include a PendingConfirmation."""
+        with _ctx():
+            resp = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.needs_confirmation is True
+        assert resp.pending is not None
+        assert resp.pending.plan is not None
+        assert resp.pending.intent is not None
+
+    def test_pending_preserves_plan_and_intent(self) -> None:
+        """Pending bundles the same plan/intent as the response."""
+        with _ctx():
+            resp = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.pending is not None
+        assert resp.pending.plan == resp.plan
+        assert resp.pending.intent == resp.intent
+
+    def test_pending_has_created_at(self) -> None:
+        """PendingConfirmation has a timestamp."""
+        from kavi.agent.models import PendingConfirmation
+
+        pending = PendingConfirmation(
+            plan=SkillAction(skill_name="write_note", input={"path": "a.md"}),
+            intent=WriteNoteIntent(title="Test", body="hi"),
+        )
+        assert pending.created_at is not None
+
+    def test_pending_not_expired_when_fresh(self) -> None:
+        """Fresh PendingConfirmation is not expired."""
+        from kavi.agent.models import PendingConfirmation
+
+        pending = PendingConfirmation(
+            plan=SkillAction(skill_name="write_note", input={"path": "a.md"}),
+            intent=WriteNoteIntent(title="Test", body="hi"),
+        )
+        assert not pending.is_expired()
+
+    def test_pending_expired_after_ttl(self) -> None:
+        """PendingConfirmation expires after CONFIRMATION_TTL_SECONDS."""
+        from datetime import datetime, timedelta
+
+        from kavi.agent.models import CONFIRMATION_TTL_SECONDS, PendingConfirmation
+
+        old_time = datetime.now(UTC) - timedelta(
+            seconds=CONFIRMATION_TTL_SECONDS + 1,
+        )
+        pending = PendingConfirmation(
+            plan=SkillAction(skill_name="write_note", input={"path": "a.md"}),
+            intent=WriteNoteIntent(title="Test", body="hi"),
+            created_at=old_time,
+        )
+        assert pending.is_expired()
+
+    def test_pending_captures_session_snapshot(self) -> None:
+        """PendingConfirmation includes the session at time of creation."""
+        from kavi.agent.models import SessionContext
+
+        session = SessionContext()
+        with _ctx():
+            resp = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert resp.pending is not None
+        assert resp.pending.session is session
+
+    def test_read_only_has_no_pending(self) -> None:
+        """READ_ONLY skills auto-execute — no pending confirmation."""
+        with _ctx():
+            resp = handle_message(
+                "summarize notes/ml.md",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.needs_confirmation is False
+        assert resp.pending is None
+
+    def test_pending_serializes_to_json(self) -> None:
+        """PendingConfirmation round-trips through JSON."""
+        with _ctx():
+            resp = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.pending is not None
+        data = json.loads(resp.model_dump_json())
+        assert data["pending"] is not None
+        assert data["pending"]["plan"]["skill_name"] == "write_note"
+        assert data["pending"]["created_at"] is not None
+
+
+class TestConfirmPending:
+    """confirm_pending() executes a stashed plan with TTL enforcement."""
+
+    def test_confirm_executes_fresh_pending(self) -> None:
+        """Fresh PendingConfirmation executes successfully."""
+        from kavi.agent.core import confirm_pending
+
+        with _ctx():
+            resp1 = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp1.pending is not None
+
+        with _ctx():
+            resp2 = confirm_pending(
+                resp1.pending, registry_path=FAKE_REGISTRY,
+            )
+        assert resp2.error is None
+        assert len(resp2.records) == 1
+        assert resp2.records[0].success
+        assert resp2.records[0].skill_name == "write_note"
+
+    def test_confirm_rejects_expired(self) -> None:
+        """Expired PendingConfirmation returns error, no execution."""
+        from datetime import datetime, timedelta
+
+        from kavi.agent.core import confirm_pending
+        from kavi.agent.models import CONFIRMATION_TTL_SECONDS, PendingConfirmation
+
+        old_time = datetime.now(UTC) - timedelta(
+            seconds=CONFIRMATION_TTL_SECONDS + 1,
+        )
+        pending = PendingConfirmation(
+            plan=SkillAction(
+                skill_name="write_note",
+                input={"path": "Inbox/AI/Test.md", "title": "Test", "body": "hi"},
+            ),
+            intent=WriteNoteIntent(title="Test", body="hi"),
+            created_at=old_time,
+        )
+
+        with _ctx():
+            resp = confirm_pending(pending, registry_path=FAKE_REGISTRY)
+        assert resp.error is not None
+        assert "expired" in resp.error.lower()
+        assert resp.records == []
+
+    def test_confirm_preserves_session(self) -> None:
+        """confirm_pending uses the session snapshot from the pending."""
+        from kavi.agent.core import confirm_pending
+        from kavi.agent.models import Anchor, SessionContext
+
+        session = SessionContext(anchors=[
+            Anchor(
+                label="prior search",
+                execution_id="abc-123",
+                skill_name="search_notes",
+                data={"query": "ml"},
+            ),
+        ])
+        with _ctx():
+            resp1 = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert resp1.pending is not None
+        assert resp1.pending.session is session
+
+        with _ctx():
+            resp2 = confirm_pending(
+                resp1.pending, registry_path=FAKE_REGISTRY,
+            )
+        assert resp2.session is not None
+        # Session should have the original anchor + new write anchor
+        assert len(resp2.session.anchors) >= 1
+
+    def test_confirm_preserves_warnings(self) -> None:
+        """Warnings from the original parse propagate through confirm."""
+        from kavi.agent.core import confirm_pending
+        from kavi.agent.models import PendingConfirmation
+
+        pending = PendingConfirmation(
+            plan=SkillAction(
+                skill_name="write_note",
+                input={"path": "Inbox/AI/T.md", "title": "T", "body": "b"},
+            ),
+            intent=WriteNoteIntent(title="T", body="b"),
+            warnings=["trailing intent ignored"],
+        )
+        with _ctx():
+            resp = confirm_pending(pending, registry_path=FAKE_REGISTRY)
+        assert resp.warnings == ["trailing intent ignored"]
+
+    def test_confirm_logs_to_file(self, tmp_path: Path) -> None:
+        """confirm_pending writes execution records to log."""
+        from kavi.agent.core import confirm_pending
+
+        log_file = tmp_path / "exec.jsonl"
+        with _ctx():
+            resp1 = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp1.pending is not None
+
+        with _ctx():
+            confirm_pending(
+                resp1.pending,
+                registry_path=FAKE_REGISTRY,
+                log_path=log_file,
+            )
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 1
+        rec = json.loads(lines[0])
+        assert rec["skill_name"] == "write_note"
+
+    def test_confirm_no_reparse(self) -> None:
+        """confirm_pending never calls parse_intent — no re-parse."""
+        from kavi.agent.core import confirm_pending
+
+        with _ctx():
+            resp1 = handle_message(
+                "write Test\nhello",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp1.pending is not None
+
+        # Patch parse_intent to fail if called
+        with _ctx(), patch(
+            "kavi.agent.parser.parse_intent",
+            side_effect=AssertionError("parse_intent should not be called"),
+        ):
+            resp2 = confirm_pending(
+                resp1.pending, registry_path=FAKE_REGISTRY,
+            )
+        assert resp2.error is None
+        assert resp2.records[0].success
+
+    def test_full_roundtrip_stash_confirm(self) -> None:
+        """Full round-trip: handle_message → stash → confirm_pending."""
+        from kavi.agent.core import confirm_pending
+        from kavi.agent.models import SessionContext
+
+        session = SessionContext()
+
+        # Step 1: parse + plan → needs confirmation
+        with _ctx():
+            resp1 = handle_message(
+                "write Test\nhello world",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert resp1.needs_confirmation is True
+        assert resp1.pending is not None
+        assert resp1.records == []
+
+        # Step 2: confirm → executes the exact stashed plan
+        with _ctx():
+            resp2 = confirm_pending(
+                resp1.pending, registry_path=FAKE_REGISTRY,
+            )
+        assert resp2.error is None
+        assert len(resp2.records) == 1
+        assert resp2.records[0].success
+        assert resp2.records[0].skill_name == "write_note"
+        # Verify the input matches what was stashed
+        assert resp2.records[0].input_json["title"] == "Test"
+        assert resp2.records[0].input_json["body"] == "hello world"

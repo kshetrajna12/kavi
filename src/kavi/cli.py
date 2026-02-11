@@ -591,7 +591,7 @@ def format_search_results(output_json: dict, verbose: bool = False) -> str:
 
 def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
-    from kavi.agent.core import execute_plan, handle_message
+    from kavi.agent.core import confirm_pending, handle_message
     from kavi.agent.models import SessionContext, SkillAction
 
     rprint("[bold]Kavi Chat v0[/bold] — type 'help' for commands, 'quit' to exit\n")
@@ -629,9 +629,9 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
         )
 
         # If write_note with empty body, prompt for body then update
-        # the stashed plan (no re-parse)
+        # the stashed pending confirmation (no re-parse)
         if (
-            resp.needs_confirmation
+            resp.pending is not None
             and hasattr(resp.intent, "kind")
             and resp.intent.kind == "write_note"
             and hasattr(resp.intent, "body")
@@ -653,12 +653,16 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                     continue
                 body = "\n".join(body_lines)
                 # Update stashed plan with body — no re-parse
-                if isinstance(resp.plan, SkillAction):
+                if isinstance(resp.pending.plan, SkillAction):
                     resp = resp.model_copy(
                         update={
-                            "plan": SkillAction(
-                                skill_name=resp.plan.skill_name,
-                                input={**resp.plan.input, "body": body},
+                            "pending": resp.pending.model_copy(
+                                update={
+                                    "plan": SkillAction(
+                                        skill_name=resp.pending.plan.skill_name,
+                                        input={**resp.pending.plan.input, "body": body},
+                                    ),
+                                },
                             ),
                             "error": None,
                         },
@@ -667,25 +671,21 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
                 rprint("\nBye.")
                 return
 
-        # Handle confirmation flow for FILE_WRITE skills
-        if resp.needs_confirmation:
+        # Handle confirmation flow via PendingConfirmation
+        if resp.pending is not None:
             rprint("\n[yellow]Action requires confirmation:[/yellow]")
             rprint(f"  Intent: {resp.intent.kind}")
-            if resp.plan is not None:
+            if resp.pending.plan is not None:
                 plan_json = json.dumps(
-                    resp.plan.model_dump(), indent=4,
+                    resp.pending.plan.model_dump(), indent=4,
                 )
                 rprint(f"  Plan: {plan_json}")
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
-                assert resp.plan is not None  # guaranteed by needs_confirmation
-                resp = execute_plan(
-                    resp.plan,
-                    resp.intent,
+                resp = confirm_pending(
+                    resp.pending,
                     registry_path=registry_path,
                     log_path=log_path,
-                    session=session,
-                    warnings=resp.warnings,
                 )
             else:
                 rprint("[dim]Cancelled.[/dim]\n")

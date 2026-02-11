@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -212,6 +213,31 @@ class ChainAction(BaseModel):
 PlannedAction = SkillAction | ChainAction
 
 
+# ── Confirmation stash ──────────────────────────────────────────────
+
+CONFIRMATION_TTL_SECONDS = 300  # 5 minutes
+
+
+class PendingConfirmation(BaseModel):
+    """Fully resolved invocation stashed for user confirmation.
+
+    Bundles the plan, intent, and session snapshot so that confirmation
+    executes exactly what was shown — no re-parse, no re-resolve.
+    TTL-bound: expires after CONFIRMATION_TTL_SECONDS.
+    """
+
+    plan: PlannedAction
+    intent: ParsedIntent
+    session: SessionContext | None = None
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    def is_expired(self) -> bool:
+        """Check if this confirmation has exceeded its TTL."""
+        age = (datetime.now(UTC) - self.created_at).total_seconds()
+        return age > CONFIRMATION_TTL_SECONDS
+
+
 # ── Agent response ───────────────────────────────────────────────────
 
 
@@ -227,6 +253,7 @@ class AgentResponse(BaseModel):
     plan: PlannedAction | None = None
     records: list[ExecutionRecord] = Field(default_factory=list)
     needs_confirmation: bool = False
+    pending: PendingConfirmation | None = None
     warnings: list[str] = Field(default_factory=list)
     help_text: str | None = None
     error: str | None = None

@@ -17,6 +17,7 @@ from kavi.agent.models import (
     ChainAction,
     HelpIntent,
     ParsedIntent,
+    PendingConfirmation,
     SessionContext,
     SkillAction,
     TransformIntent,
@@ -151,6 +152,10 @@ def handle_message(
             intent=intent,
             plan=plan,
             needs_confirmation=True,
+            pending=PendingConfirmation(
+                plan=plan, intent=intent,
+                session=session, warnings=warnings or [],
+            ),
             warnings=warnings,
             error="No body provided. Use the REPL for multi-line input.",
             session=session if session is not None else None,
@@ -162,6 +167,10 @@ def handle_message(
             intent=intent,
             plan=plan,
             needs_confirmation=True,
+            pending=PendingConfirmation(
+                plan=plan, intent=intent,
+                session=session, warnings=warnings or [],
+            ),
             warnings=warnings,
             session=session if session is not None else None,
         )
@@ -197,6 +206,33 @@ def execute_plan(
         log_path=log_path,
         session=session,
         warnings=warnings,
+    )
+
+
+def confirm_pending(
+    pending: PendingConfirmation,
+    *,
+    registry_path: Path,
+    log_path: Path | None = None,
+) -> AgentResponse:
+    """Execute a stashed PendingConfirmation after user consent.
+
+    Validates TTL. Uses the exact plan/intent/session snapshot from the
+    original handle_message() call — no re-parse, no re-resolve.
+    """
+    if pending.is_expired():
+        return AgentResponse(
+            intent=pending.intent,
+            plan=pending.plan,
+            error="Confirmation expired. Please try again.",
+            session=pending.session,
+        )
+    return _finalize(
+        pending.plan, pending.intent,
+        registry_path=registry_path,
+        log_path=log_path,
+        session=pending.session,
+        warnings=pending.warnings,
     )
 
 
