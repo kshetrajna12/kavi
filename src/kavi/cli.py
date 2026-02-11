@@ -727,11 +727,30 @@ def _chat_repl(
                 rprint("[dim]Cancelled.[/dim]\n")
                 continue
 
-        # Accumulate session context (D015)
+        # Accumulate session context: anchors (D015) + history (D020)
         if resp.session is not None:
             session = resp.session
 
-        rprint(present(resp, verbose=verbose_mode))
+        # Format for display and for history recording
+        displayed = present(resp, verbose=verbose_mode)
+        conv_text = present(resp, verbose=False) if verbose_mode else displayed
+
+        # Accumulate conversation history on the session (D020)
+        tc = resp.tool_call
+        if (
+            tc is not None
+            and getattr(tc, "name", "") not in ("talk", "clarify", "meta")
+        ):
+            raw_output = (
+                json.dumps(resp.records[0].output_json)
+                if resp.records
+                else "{}"
+            )
+            session.add_tool_turn(line, tc, raw_output, conv_text)
+        else:
+            session.add_chat_turn(line, conv_text)
+
+        rprint(displayed)
         rprint("")
 
 

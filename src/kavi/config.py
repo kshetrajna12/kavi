@@ -28,4 +28,4 @@ SPARK_BASE_URL = "http://localhost:8000/v1"
 SPARK_MODEL = "gpt-oss-20b"
 SPARK_EMBED_MODEL = "bge-large"
 SPARK_TIMEOUT = 30  # seconds
-SPARK_MAX_PROMPT_CHARS = 8000  # bound input before sending
+SPARK_MAX_PROMPT_CHARS = 12000  # bound input before sending

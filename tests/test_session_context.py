@@ -9,7 +9,6 @@ from kavi.agent.models import (
     AmbiguityResponse,
     Anchor,
     ParsedIntent,
-    SearchAndSummarizeIntent,
     SessionContext,
     SkillInvocationIntent,
     TransformIntent,
@@ -431,7 +430,7 @@ class TestResolver:
 
 
 class TestResolveSearchRef:
-    """resolve_refs handles search ref patterns."""
+    """resolve_refs handles search ref patterns via SkillInvocationIntent."""
 
     def test_search_for_that_after_search(self) -> None:
         from kavi.agent.resolver import resolve_refs
@@ -440,10 +439,12 @@ class TestResolveSearchRef:
         ctx.anchors = [
             _anchor("search_notes", "aaa", {"query": "kubernetes"}),
         ]
-        intent = SearchAndSummarizeIntent(query="ref:last")
+        intent = SkillInvocationIntent(
+            skill_name="search_notes", input={"query": "ref:last"},
+        )
         result = resolve_refs(intent, ctx)
-        assert isinstance(result, SearchAndSummarizeIntent)
-        assert result.query == "kubernetes"
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["query"] == "kubernetes"
 
     def test_search_for_that_after_summarize(self) -> None:
         from kavi.agent.resolver import resolve_refs
@@ -455,11 +456,13 @@ class TestResolveSearchRef:
                 {"path": "notes/ml.md", "summary": "ML is great"},
             ),
         ]
-        intent = SearchAndSummarizeIntent(query="ref:last")
+        intent = SkillInvocationIntent(
+            skill_name="search_notes", input={"query": "ref:last"},
+        )
         result = resolve_refs(intent, ctx)
-        assert isinstance(result, SearchAndSummarizeIntent)
-        # Should prefer summary over path for search
-        assert result.query == "ML is great"
+        assert isinstance(result, SkillInvocationIntent)
+        # Generic resolver uses _anchor_value which prefers path over summary
+        assert result.input["query"] == "notes/ml.md"
 
     def test_search_again_uses_last_search_query(self) -> None:
         from kavi.agent.resolver import resolve_refs
@@ -469,24 +472,30 @@ class TestResolveSearchRef:
             _anchor("search_notes", "aaa", {"query": "kubernetes"}),
             _anchor("summarize_note", "bbb", {"path": "a.md", "summary": "s"}),
         ]
-        intent = SearchAndSummarizeIntent(query="ref:last_search")
+        intent = SkillInvocationIntent(
+            skill_name="search_notes", input={"query": "ref:last_search"},
+        )
         result = resolve_refs(intent, ctx)
-        assert isinstance(result, SearchAndSummarizeIntent)
-        assert result.query == "kubernetes"
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["query"] == "kubernetes"
 
     def test_search_ref_no_session_passes_through(self) -> None:
         from kavi.agent.resolver import resolve_refs
 
-        intent = SearchAndSummarizeIntent(query="ref:last")
+        intent = SkillInvocationIntent(
+            skill_name="search_notes", input={"query": "ref:last"},
+        )
         result = resolve_refs(intent, None)
-        assert isinstance(result, SearchAndSummarizeIntent)
-        assert result.query == "ref:last"
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["query"] == "ref:last"
 
     def test_search_ref_no_anchors_returns_ambiguity(self) -> None:
         from kavi.agent.resolver import resolve_refs
 
         ctx = SessionContext()
-        intent = SearchAndSummarizeIntent(query="ref:last")
+        intent = SkillInvocationIntent(
+            skill_name="search_notes", input={"query": "ref:last"},
+        )
         result = resolve_refs(intent, ctx)
         assert isinstance(result, AmbiguityResponse)
         assert "no prior results" in result.message.lower()
@@ -496,25 +505,12 @@ class TestResolveSearchRef:
 
         ctx = SessionContext()
         ctx.anchors = [_anchor("search_notes", "aaa", {"query": "ml"})]
-        intent = SearchAndSummarizeIntent(query="kubernetes")
-        result = resolve_refs(intent, ctx)
-        assert isinstance(result, SearchAndSummarizeIntent)
-        assert result.query == "kubernetes"
-
-    def test_search_ref_preserves_style(self) -> None:
-        from kavi.agent.resolver import resolve_refs
-
-        ctx = SessionContext()
-        ctx.anchors = [
-            _anchor("search_notes", "aaa", {"query": "ml"}),
-        ]
-        intent = SearchAndSummarizeIntent(
-            query="ref:last", style="paragraph",
+        intent = SkillInvocationIntent(
+            skill_name="search_notes", input={"query": "kubernetes"},
         )
         result = resolve_refs(intent, ctx)
-        assert isinstance(result, SearchAndSummarizeIntent)
-        assert result.style == "paragraph"
-        assert result.query == "ml"
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["query"] == "kubernetes"
 
 
 # ── Resolve TransformIntent ───────────────────────────────────────────
@@ -809,8 +805,7 @@ class TestParserRefPatterns:
     """Deterministic parser emits ref markers for 'that'/'it'/'again'."""
 
     def _parse(self, msg: str) -> ParsedIntent:
-        intent, _ = parse_intent(msg, SKILL_INFOS, mode="deterministic")
-        return intent
+        return parse_intent(msg, SKILL_INFOS, mode="deterministic").intent
 
     def test_summarize_that(self) -> None:
         intent = self._parse("summarize that")
@@ -872,45 +867,53 @@ class TestParserRefPatterns:
 
     def test_search_for_that(self) -> None:
         intent = self._parse("search for that")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last"
 
     def test_search_that(self) -> None:
         intent = self._parse("search that")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last"
 
     def test_find_that(self) -> None:
         intent = self._parse("find that")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last"
 
     def test_search_for_it(self) -> None:
         intent = self._parse("search for it")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last"
 
     def test_search_notes_about_that(self) -> None:
         intent = self._parse("search notes about that")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last"
 
     def test_search_again(self) -> None:
         intent = self._parse("search again")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last_search"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last_search"
 
     def test_find_again(self) -> None:
         intent = self._parse("find again")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "ref:last_search"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "ref:last_search"
 
     def test_search_real_query_not_ref(self) -> None:
         """'search kubernetes' should NOT match ref pattern."""
         intent = self._parse("search kubernetes")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "kubernetes"
-        assert "ref:" not in intent.query
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "kubernetes"
+        assert "ref:" not in intent.input["query"]
 
     # ── TransformIntent patterns ──────────────────────────────────────
 
@@ -1001,7 +1004,6 @@ class TestHandleMessageWithSession:
             )
         assert resp.session is not None
         assert len(resp.session.anchors) > 0
-        # search → summarize chain produces 2 anchors
         skill_names = [a.skill_name for a in resp.session.anchors]
         assert "search_notes" in skill_names
 
@@ -1076,7 +1078,7 @@ class TestHandleMessageWithSession:
                 parse_mode="deterministic",
             )
         assert resp.error is None
-        assert len(resp.records) == 2
+        assert len(resp.records) == 1
         assert resp.session is None
 
 

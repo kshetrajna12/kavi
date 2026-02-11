@@ -8,7 +8,7 @@ AgentResponse. Never raises — all errors captured in the response.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from kavi.agent.constants import (
     CHAT_DEFAULT_ALLOWED_EFFECTS,
@@ -81,8 +81,12 @@ def handle_message(
             error=f"Registry error: {exc}",
         )
 
-    # 2. Parse intent
-    intent, warnings = parse_intent(message, skills, mode=parse_mode)
+    # 2. Parse intent (with conversation history for LLM context)
+    history = session.messages if session else None
+    parse_result = parse_intent(message, skills, mode=parse_mode, history=history)
+    intent = parse_result.intent
+    warnings = list(parse_result.warnings)
+    tool_call = parse_result.tool_call
 
     # 2b. Resolve references (D015)
     _skip_resolve = (UnsupportedIntent, HelpIntent, TalkIntent, ClarifyIntent)
@@ -94,6 +98,7 @@ def handle_message(
                 warnings=warnings,
                 error=resolved.message,
                 session=session,
+                tool_call=tool_call,
             )
         intent = resolved
 
@@ -104,6 +109,7 @@ def handle_message(
             warnings=warnings,
             error="Cannot apply correction — no session context. "
             "Use the REPL for multi-turn workflows.",
+            tool_call=tool_call,
         )
 
     # 3. Check for unsupported / clarify
@@ -111,6 +117,7 @@ def handle_message(
         return AgentResponse(
             intent=intent, warnings=warnings, error=intent.message,
             session=session if session is not None else None,
+            tool_call=tool_call,
         )
 
     if isinstance(intent, ClarifyIntent):
@@ -119,6 +126,7 @@ def handle_message(
             warnings=warnings,
             error=intent.question,
             session=session if session is not None else None,
+            tool_call=tool_call,
         )
 
     # 3b. Help — return skills index, no planning needed
@@ -131,6 +139,7 @@ def handle_message(
             warnings=warnings,
             help_text=format_index(index),
             session=session if session is not None else None,
+            tool_call=tool_call,
         )
 
     # 3c. Talk — generate conversational response, log as ExecutionRecord
@@ -140,6 +149,7 @@ def handle_message(
             session=session,
             log_path=log_path,
             warnings=warnings,
+            tool_call=tool_call,
         )
 
     # 4. Plan
@@ -192,6 +202,7 @@ def handle_message(
                 warnings=warnings,
                 error="No body provided. Use the REPL for multi-line input.",
                 session=session if session is not None else None,
+                tool_call=tool_call,
             )
 
     # 7. Check confirmation for side-effect skills
@@ -206,6 +217,7 @@ def handle_message(
             ),
             warnings=warnings,
             session=session if session is not None else None,
+            tool_call=tool_call,
         )
 
     # 8. Execute → log → session → return
@@ -215,6 +227,7 @@ def handle_message(
         log_path=log_path,
         session=session,
         warnings=warnings,
+        tool_call=tool_call,
     )
 
 
@@ -277,6 +290,7 @@ def _finalize(
     log_path: Path | None = None,
     session: SessionContext | None = None,
     warnings: list[str] | None = None,
+    tool_call: Any = None,
 ) -> AgentResponse:
     """Execute plan, log records, update session, return response.
 
@@ -291,6 +305,7 @@ def _finalize(
             warnings=warnings or [],
             error=f"Execution error: {exc}",
             session=session,
+            tool_call=tool_call,
         )
 
     if log_path is not None:
@@ -314,6 +329,7 @@ def _finalize(
         warnings=warnings or [],
         error=error,
         session=updated_session,
+        tool_call=tool_call,
     )
 
 
@@ -420,6 +436,7 @@ def _handle_talk(
     session: SessionContext | None,
     log_path: Path | None,
     warnings: list[str] | None,
+    tool_call: Any = None,
 ) -> AgentResponse:
     """Generate a conversational response and log as ExecutionRecord."""
     import datetime
@@ -453,6 +470,7 @@ def _handle_talk(
         records=[record],
         warnings=warnings or [],
         session=updated_session,
+        tool_call=tool_call,
     )
 
 
@@ -463,26 +481,16 @@ def _generate_talk_response(
     """Generate a conversational response via Sparkstation.
 
     Falls back to a canned response if Sparkstation is unavailable.
-    Uses role-separated messages (D019).
+    Uses full conversation history from session (D020).
     """
     from kavi.llm.spark import SparkUnavailableError, generate
 
-    system_parts = [_TALK_SYSTEM]
-    if session and session.anchors:
-        context_lines = ["Recent context:"]
-        for anchor in session.anchors[-3:]:
-            data_summary = ", ".join(
-                f"{k}={v}" for k, v in anchor.data.items()
-            )
-            context_lines.append(
-                f"- {anchor.skill_name}: {data_summary}",
-            )
-        system_parts.append("\n".join(context_lines))
-
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": "\n\n".join(system_parts)},
-        {"role": "user", "content": message},
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _TALK_SYSTEM},
     ]
+    if session and session.messages:
+        messages.extend(session.messages)
+    messages.append({"role": "user", "content": message})
 
     try:
         raw = generate(messages, temperature=0.7)

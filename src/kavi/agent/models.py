@@ -10,9 +10,11 @@ from pydantic import BaseModel, Field
 from kavi.consumer.chain import ChainSpec
 from kavi.consumer.shim import ExecutionRecord
 
-# ── Session context (D015) ────────────────────────────────────────────
+# ── Session context (D015, D020) ──────────────────────────────────────
 
 MAX_ANCHORS = 10
+MAX_HISTORY_MESSAGES = 40
+MAX_TURN_CONTENT_CHARS = 2000
 
 
 class Anchor(BaseModel):
@@ -46,9 +48,10 @@ def _extract_anchor_data(skill_name: str, output: dict[str, Any]) -> dict[str, A
 
 
 class SessionContext(BaseModel):
-    """Sliding window of referenceable anchors from prior turns (D015)."""
+    """Sliding window of referenceable anchors and conversation history (D015, D020)."""
 
     anchors: list[Anchor] = Field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
 
     def add_from_records(self, records: list[ExecutionRecord]) -> None:
         """Extract anchors from execution records and append."""
@@ -123,6 +126,73 @@ class SessionContext(BaseModel):
 
         return []
 
+    def _truncate(self, text: str) -> str:
+        """Truncate content to MAX_TURN_CONTENT_CHARS."""
+        if len(text) <= MAX_TURN_CONTENT_CHARS:
+            return text
+        return text[:MAX_TURN_CONTENT_CHARS] + "..."
+
+    def _trim_messages(self) -> None:
+        """Enforce sliding window, keeping tool-call groups atomic."""
+        while len(self.messages) > MAX_HISTORY_MESSAGES:
+            # Never drop the first message if it's system
+            start = 0
+            if self.messages and self.messages[0].get("role") == "system":
+                start = 1
+            if start >= len(self.messages):
+                break
+            # Drop messages from the oldest end; keep tool groups atomic
+            msg = self.messages[start]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                # Drop the 3-message group: assistant+tool_calls, tool, assistant
+                count = min(3, len(self.messages) - start)
+                del self.messages[start:start + count]
+            else:
+                del self.messages[start]
+
+    def add_chat_turn(self, user_msg: str, assistant_msg: str) -> None:
+        """Append a user/assistant pair for a talk turn (D020)."""
+        self.messages.append({"role": "user", "content": self._truncate(user_msg)})
+        self.messages.append({"role": "assistant", "content": self._truncate(assistant_msg)})
+        self._trim_messages()
+
+    def add_tool_turn(
+        self,
+        user_msg: str,
+        tool_call_result: Any,
+        raw_output_json: str,
+        assistant_response: str,
+    ) -> None:
+        """Append a 4-message tool-call group for a skill turn (D020).
+
+        Messages: user, assistant+tool_calls, tool, assistant.
+        """
+        call_id = getattr(tool_call_result, "call_id", "") or "call_0"
+        tool_name = getattr(tool_call_result, "name", "")
+        import json
+        args_str = json.dumps(getattr(tool_call_result, "arguments", {}))
+
+        self.messages.append({"role": "user", "content": self._truncate(user_msg)})
+        self.messages.append({
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": call_id,
+                "type": "function",
+                "function": {"name": tool_name, "arguments": args_str},
+            }],
+        })
+        self.messages.append({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": self._truncate(raw_output_json),
+        })
+        self.messages.append({
+            "role": "assistant",
+            "content": self._truncate(assistant_response),
+        })
+        self._trim_messages()
+
 
 class AmbiguityResponse(BaseModel):
     """Returned when a ref cannot be unambiguously resolved."""
@@ -132,13 +202,6 @@ class AmbiguityResponse(BaseModel):
     message: str
 
 # ── Parsed intents (discriminated union) ─────────────────────────────
-
-
-class SearchAndSummarizeIntent(BaseModel):
-    kind: Literal["search_and_summarize"] = "search_and_summarize"
-    query: str
-    top_k: int = 5
-    style: Literal["bullet", "paragraph"] = "bullet"
 
 
 class WriteNoteIntent(BaseModel):
@@ -195,8 +258,7 @@ class UnsupportedIntent(BaseModel):
 
 
 ParsedIntent = (
-    SearchAndSummarizeIntent
-    | WriteNoteIntent
+    WriteNoteIntent
     | SkillInvocationIntent
     | TransformIntent
     | HelpIntent
@@ -278,3 +340,4 @@ class AgentResponse(BaseModel):
     help_text: str | None = None
     error: str | None = None
     session: SessionContext | None = None
+    tool_call: Any = None

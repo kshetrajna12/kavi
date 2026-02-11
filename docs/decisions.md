@@ -461,3 +461,62 @@ The `_looks_like_action_ref` escalation heuristic was added as a band-aid: when 
 - `_build_prompt()`, `_parse_json_response()`, `_dict_to_intent()`, `_SYSTEM_PROMPT_HEADER` deleted from parser.
 - Test mocks target `generate_tool_call` (not `generate`) and return `ToolCallResult` objects (not JSON strings).
 - D018's guardrails about JSON schema validation are superseded by tool-call schema validation.
+
+---
+
+## D020: Conversation history + per-skill tool schemas
+
+**Context:** The parser sent `[system, current_user]` to `generate_tool_call()` — no prior turns. The LLM couldn't see what "that", "all of this", or "write that" referred to. Real bug: user asked about Indianapolis, got a response, said "write all of this into a note" — LLM stuffed the raw instruction as the body because it had no history to reference.
+
+Also: skills were behind a single `invoke_skill` tool with `skill_name` as an argument. Standard tool calling convention is one tool per function with typed parameters.
+
+**Decision:** Thread full conversation history through the parser and expose each registered skill as its own tool schema.
+
+**Changes:**
+
+1. **Per-skill tool schemas.** Each registered skill becomes its own OpenAI-compatible tool built from `SkillInfo.input_schema`. The model calls `search_notes(query="ml")` directly, not `invoke_skill(skill_name="search_notes", input={...})`. Static tools (talk, clarify, meta) retained.
+
+2. **Conversation history on SessionContext.** New `messages: list[dict[str, Any]]` field with sliding window (MAX_HISTORY_MESSAGES=40, MAX_TURN_CONTENT_CHARS=2000). Two accumulation methods:
+   - `add_tool_turn(user_msg, tool_call_result, raw_output_json, assistant_response)` — 4-message group (user, assistant+tool_calls, tool, assistant)
+   - `add_chat_turn(user_msg, assistant_msg)` — 2-message pair (talk turns, clarifications)
+
+3. **History threading.** `parse_intent()` and `_generate_talk_response()` receive `session.messages` as conversation history. Messages are `[system] + history + [current_user]`.
+
+4. **Group-aware truncation.** `_truncate_messages` in spark.py never drops system (first) or current user (last). Drops oldest history messages, keeping tool-call groups atomic (assistant+tool_calls, tool, assistant = 3 messages). SPARK_MAX_PROMPT_CHARS raised 8000→12000.
+
+5. **REPL accumulation.** CLI accumulates history after each turn: tool invocations use `add_tool_turn`, talk/clarify use `add_chat_turn`. Deterministic fallback (Sparkstation down) degrades gracefully to `add_chat_turn`.
+
+| Before (D019) | After (D020) |
+|---|---|
+| `invoke_skill` wrapper tool with `skill_name` arg | One tool per registered skill with typed parameters |
+| `[system, current_user]` to LLM | `[system] + session.messages + [current_user]` |
+| No conversation memory | Sliding window of 40 messages |
+| `SearchAndSummarizeIntent` + 2-step chain | LLM calls skills in sequence; search returns 1 record |
+| `_build_skill_section()` text listing | Skills described in tool schemas |
+| `_body_is_instruction()` heuristic | LLM sees history, knows what "that" means |
+
+**What dies:**
+
+| Code | Why |
+|---|---|
+| `TOOL_INVOKE_SKILL` | Replaced by per-skill tools |
+| `_build_skill_section()`, `_get_required_fields()` | Skills are in tool schemas now |
+| `invoke_skill` unwrapping in `_tool_call_to_intent` | Model calls skill name directly |
+| `SearchAndSummarizeIntent` | LLM calls search then summarize; no pre-built chains |
+| search_and_summarize chain in planner | Same |
+| `_body_is_instruction()` | LLM sees full history |
+| Last-3-anchors injection in talk system msg | Replaced by full history |
+
+**What stays:** SessionContext anchors + extract_anchors (deterministic fallback), resolve_refs() + all resolver functions, deterministic ref patterns (frozen D018), PendingConfirmation stashing, TransformIntent, auto-bind empty write_note body (defense-in-depth).
+
+**Rationale:**
+1. Per-skill tools give the model typed schemas per function — standard tool calling, better structured output.
+2. Conversation history solves the "write that" class of bugs — the model can see what "that" actually refers to.
+3. Group-aware truncation preserves tool-call coherence as history grows.
+
+**Implications:**
+- `ToolCallResult.call_id` added for proper tool message threading.
+- Test mocks return `ToolCallResult("search_notes", {...})` not `ToolCallResult("invoke_skill", {"skill_name": "search_notes", ...})`.
+- `parse_intent()` returns `ParseResult` NamedTuple with 3 fields: `(intent, warnings, tool_call)`.
+- `AgentResponse.tool_call` carries the raw tool call for REPL history decisions.
+- `SearchAndSummarizeIntent` and `ChainAction` removed from models and planner.

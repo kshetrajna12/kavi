@@ -1,9 +1,10 @@
-"""Intent parser — tool-call-first with deterministic fallback (D018, D019).
+"""Intent parser — per-skill tool schemas with conversation history (D018–D020).
 
 Two parse modes:
 - "llm" (default): Sparkstation classifies every turn via tool calling
-  into a structured intent.  Falls back to deterministic on Sparkstation
-  failure or malformed LLM output.
+  into a structured intent.  Each registered skill is its own tool with
+  typed parameters.  Full conversation history is sent for context.
+  Falls back to deterministic on Sparkstation failure or malformed output.
 - "deterministic": Frozen fallback floor for Sparkstation-unavailable
   degraded mode.  Covers the 6 current skills' most common invocation
   forms.  New skills MUST NOT add new regex patterns here.
@@ -21,14 +22,13 @@ from kavi.agent.models import (
     ClarifyIntent,
     HelpIntent,
     ParsedIntent,
-    SearchAndSummarizeIntent,
     SkillInvocationIntent,
     TalkIntent,
     TransformIntent,
     WriteNoteIntent,
 )
 from kavi.consumer.shim import SkillInfo
-from kavi.llm.spark import SparkError, SparkUnavailableError, generate_tool_call
+from kavi.llm.spark import SparkError, SparkUnavailableError, ToolCallResult, generate_tool_call
 
 ParseMode = Literal["llm", "deterministic"]
 
@@ -38,9 +38,10 @@ class ParseResult(NamedTuple):
 
     intent: ParsedIntent
     warnings: list[str]
+    tool_call: ToolCallResult | None = None
 
 
-# ── Tool schemas (D019) ──────────────────────────────────────────────
+# ── Static tool schemas (D019) ────────────────────────────────────────
 
 TOOL_TALK = {
     "type": "function",
@@ -56,28 +57,6 @@ TOOL_TALK = {
                 },
             },
             "required": ["message"],
-        },
-    },
-}
-
-TOOL_INVOKE_SKILL = {
-    "type": "function",
-    "function": {
-        "name": "invoke_skill",
-        "description": "Trigger a governed skill by name with input.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "skill_name": {
-                    "type": "string",
-                    "description": "Name of the skill to invoke.",
-                },
-                "input": {
-                    "type": "object",
-                    "description": "Input fields matching the skill's input schema.",
-                },
-            },
-            "required": ["skill_name", "input"],
         },
     },
 }
@@ -119,71 +98,56 @@ TOOL_META = {
     },
 }
 
-TOOLS = [TOOL_TALK, TOOL_INVOKE_SKILL, TOOL_CLARIFY, TOOL_META]
+_STATIC_TOOLS = [TOOL_TALK, TOOL_CLARIFY, TOOL_META]
 
 
-# ── System message builder ───────────────────────────────────────────
+# ── Per-skill tool schema builder (D020) ──────────────────────────────
 
-_SYSTEM_HEADER = """\
+
+def _build_skill_tools(skills: list[SkillInfo]) -> list[dict[str, Any]]:
+    """Build one tool schema per registered skill from registry metadata."""
+    tools: list[dict[str, Any]] = []
+    for s in skills:
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": s.name,
+                "description": s.description,
+                "parameters": s.input_schema,
+            },
+        })
+    return tools
+
+
+def _build_tools(skills: list[SkillInfo]) -> list[dict[str, Any]]:
+    """Build the full tool list: per-skill + static tools."""
+    return _build_skill_tools(skills) + _STATIC_TOOLS
+
+
+# ── System message ──────────────────────────────────────────────────
+
+_SYSTEM_MESSAGE = """\
 You are an intent classifier for a personal knowledge assistant.
-Given a user message, call exactly ONE tool to classify the intent.
+Given the conversation so far, call exactly ONE tool to handle the user's latest message.
 
 Rules:
-- CREATIVE REQUESTS are "talk", NOT invoke_skill. If the user asks you to \
-compose, draft, generate, or create content (e.g. "write a poem about X", \
-"write me a story", "draft an email about Y"), this is a generation request \
-— use "talk". The user wants YOU to produce the content, not to save something.
-- SAVE/STORE REQUESTS use invoke_skill. "write that to a note" saves prior \
-content to a file. "add that to my daily notes" saves to daily notes.
-- The distinction: "write a poem about dogs" → talk. \
-"write that to a note" → invoke_skill(write_note).
+- CREATIVE REQUESTS use "talk". If the user asks you to compose, draft, \
+generate, or create content (e.g. "write a poem about X"), use "talk".
+- SAVE/STORE REQUESTS call the skill directly. "write that to a note" \
+calls write_note. "add that to my daily notes" calls create_daily_note.
 - REFERENCES: If the user says "that", "it", "the result", "this", \
-"all of this", "the above", "what you said", use "ref:last" as the value. \
-For skill-specific refs, use "ref:last_<skill>". \
-When saving/writing content the user is referring to, set body to "ref:last" \
-— NEVER echo the user's instruction back as the body.
-- For CORRECTIONS ("but paragraph", "make it shorter", "try X instead"), \
-use invoke_skill with the corrected parameters and "ref:last" for unchanged fields.
-- For search/find queries, use invoke_skill with skill_name "search_notes" \
-or "search_and_summarize" (2-step chain: search → summarize).
-- If the user mentions "daily notes" or "daily" as a target, route to \
-invoke_skill with skill_name "create_daily_note".
+"all of this", "the above", "what you said", look at the conversation \
+history to find what they're referring to and use the actual content. \
+When saving content the user is referring to, set body to the actual \
+content from the conversation — do NOT echo the user's instruction as body.
+- For search/find queries, call search_notes directly.
 - For help/skills/capabilities questions, use meta(command="help").
 - For harmful or impossible requests, use talk with a polite refusal.
 - If the request is ambiguous and you need more info, use clarify.\
 """
 
 
-def _build_system_message(skills: list[SkillInfo]) -> str:
-    """Build the system message with dynamic skill section."""
-    skill_section = _build_skill_section(skills)
-    return f"{_SYSTEM_HEADER}\n\n{skill_section}"
-
-
-def _build_skill_section(skills: list[SkillInfo]) -> str:
-    """Build a dynamic skill reference for the system message."""
-    lines = ["Available skills:"]
-    for s in skills:
-        required = _get_required_fields(s.input_schema)
-        fields_str = ", ".join(f"{k}: {v}" for k, v in required.items())
-        lines.append(f"- {s.name} ({s.side_effect_class}): {s.description}")
-        if fields_str:
-            lines.append(f"  Input fields: {fields_str}")
-    return "\n".join(lines)
-
-
-def _get_required_fields(schema: dict[str, Any]) -> dict[str, str]:
-    """Extract required field names and types from a JSON schema."""
-    props = schema.get("properties", {})
-    required = set(schema.get("required", []))
-    result: dict[str, str] = {}
-    for name, info in props.items():
-        if name in required:
-            result[name] = info.get("type", "any")
-    return result
-
-
-# ── Main parse entry point ───────────────────────────────────────────
+# ── Main parse entry point ──────────────────────────────────────────
 
 
 def parse_intent(
@@ -191,39 +155,46 @@ def parse_intent(
     skills: list[SkillInfo],
     *,
     mode: ParseMode = "llm",
+    history: list[dict[str, Any]] | None = None,
 ) -> ParseResult:
     """Parse user message into a structured intent.
 
     Returns:
-        ParseResult(intent, warnings).  ``warnings`` is non-empty when
-        parts of the user request were ignored (e.g. trailing intents).
+        ParseResult(intent, warnings, tool_call).
 
     Args:
         message: Raw user input.
-        skills: Available skill metadata (used for LLM prompt context).
+        skills: Available skill metadata (used for tool schemas).
         mode: "llm" tries Sparkstation first with deterministic fallback.
               "deterministic" requires explicit command prefixes only.
+        history: Prior conversation messages for context (D020).
     """
     if mode == "deterministic":
         return ParseResult(_deterministic_parse(message, skills), [])
-    return _llm_parse(message, skills)
+    return _llm_parse(message, skills, history=history)
 
 
-# ── LLM tool-call parser (D019) ─────────────────────────────────────
+# ── LLM tool-call parser (D019 → D020) ──────────────────────────────
 
 
 def _llm_parse(
-    message: str, skills: list[SkillInfo],
+    message: str,
+    skills: list[SkillInfo],
+    *,
+    history: list[dict[str, Any]] | None = None,
 ) -> ParseResult:
-    """Tool-call-based parser with deterministic fallback on failure."""
+    """Tool-call-based parser with per-skill tools and history (D020)."""
     try:
-        system = _build_system_message(skills)
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": message},
+        tools = _build_tools(skills)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": _SYSTEM_MESSAGE},
         ]
-        result = generate_tool_call(messages, TOOLS)
-        return _tool_call_to_intent(result.name, result.arguments, message)
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": message})
+
+        result = generate_tool_call(messages, tools)
+        return _tool_call_to_intent(result.name, result.arguments, skills, result)
     except SparkUnavailableError:
         return ParseResult(_deterministic_parse(message, skills), [])
     except (SparkError, KeyError, TypeError, ValueError, ValidationError):
@@ -231,88 +202,59 @@ def _llm_parse(
 
 
 def _tool_call_to_intent(
-    tool_name: str, args: dict[str, Any], raw_message: str = "",
+    tool_name: str,
+    args: dict[str, Any],
+    skills: list[SkillInfo],
+    tool_call: ToolCallResult | None = None,
 ) -> ParseResult:
-    """Convert a tool call result to an internal intent."""
+    """Convert a tool call result to an internal intent (D020)."""
     if tool_name == "talk":
         return ParseResult(
             TalkIntent(message=args.get("message", "")),
             [],
-        )
-
-    if tool_name == "invoke_skill":
-        skill_name = args.get("skill_name", "")
-        inp = args.get("input", {})
-        if not isinstance(inp, dict):
-            inp = {}
-        # Route well-known compound intents
-        if skill_name == "search_and_summarize":
-            return ParseResult(
-                SearchAndSummarizeIntent(
-                    query=inp.get("query", ""),
-                    top_k=inp.get("top_k", 5),
-                    style=inp.get("style", "bullet"),
-                ),
-                [],
-            )
-        if skill_name == "write_note":
-            body = inp.get("body", "")
-            # Strip body if the LLM echoed the user's instruction back
-            # instead of using ref:last.  The auto-bind in core.py will
-            # fill it from session context.
-            if body and raw_message and _body_is_instruction(body, raw_message):
-                body = ""
-            return ParseResult(
-                WriteNoteIntent(
-                    title=inp.get("title", ""),
-                    body=body,
-                ),
-                [],
-            )
-        return ParseResult(
-            SkillInvocationIntent(skill_name=skill_name, input=inp),
-            [],
+            tool_call,
         )
 
     if tool_name == "clarify":
         return ParseResult(
             ClarifyIntent(question=args.get("question", "")),
             [],
+            tool_call,
         )
 
     if tool_name == "meta":
         cmd = args.get("command", "help")
         if cmd == "help":
-            return ParseResult(HelpIntent(), [])
-        # Other meta commands treated as talk for now
-        return ParseResult(TalkIntent(message=cmd), [])
+            return ParseResult(HelpIntent(), [], tool_call)
+        return ParseResult(TalkIntent(message=cmd), [], tool_call)
+
+    # Per-skill tool: model calls skill_name directly (D020)
+    skill_names = {s.name for s in skills}
+    if tool_name in skill_names:
+        if tool_name == "write_note":
+            return ParseResult(
+                WriteNoteIntent(
+                    title=args.get("title", ""),
+                    body=args.get("body", ""),
+                ),
+                [],
+                tool_call,
+            )
+        return ParseResult(
+            SkillInvocationIntent(skill_name=tool_name, input=args),
+            [],
+            tool_call,
+        )
 
     # Unknown tool → fallback to talk
     return ParseResult(
         TalkIntent(message=args.get("message", "")),
         [],
+        tool_call,
     )
 
 
-def _body_is_instruction(body: str, raw_message: str) -> bool:
-    """Return True if body looks like the user's instruction echoed back.
-
-    Small LLMs sometimes set body to the raw user message instead of
-    using ref:last.  Detect this so auto-bind in core.py can fill the
-    body from session context instead.
-    """
-    b = body.strip().lower()
-    m = raw_message.strip().lower()
-    # Exact match or body is a substring of the instruction
-    if b == m or m.startswith(b) or b.startswith(m):
-        return True
-    # Instruction-like: starts with "write" and contains "note"
-    if b.startswith("write") and "note" in b:
-        return True
-    return False
-
-
-# ── Deterministic fallback (frozen D018) ─────────────────────────────
+# ── Deterministic fallback (frozen D018) ────────────────────────────
 
 
 def _deterministic_parse(
@@ -330,7 +272,7 @@ def _deterministic_parse(
     - write <title>\\n<body>         → WriteNoteIntent
     - daily <content>               → SkillInvocationIntent(create_daily_note)
     - add to daily: <content>       → SkillInvocationIntent(create_daily_note)
-    - search/find <query>           → SearchAndSummarizeIntent
+    - search/find <query>           → SkillInvocationIntent(search_notes)
     - <skill_name> <json>           → SkillInvocationIntent (generic)
 
     Anything else returns TalkIntent.
@@ -394,7 +336,10 @@ def _deterministic_parse(
     if search_match:
         query = search_match.group(1).strip()
         if query:
-            return SearchAndSummarizeIntent(query=query)
+            return SkillInvocationIntent(
+                skill_name="search_notes",
+                input={"query": query},
+            )
 
     # Generic: "<skill_name> <json_or_args>" for any registered skill
     first_word = lower.split()[0] if lower.split() else ""
@@ -409,10 +354,9 @@ def _deterministic_parse(
     return TalkIntent(message=msg)
 
 
-# ── Reference detection (D015) ────────────────────────────────────────
+# ── Reference detection (D015) ──────────────────────────────────────
 # FROZEN (D018): These patterns are a stability floor for when
 # Sparkstation is unavailable.  Do NOT add new per-skill regexes.
-# The LLM parser handles all routing via _build_skill_section().
 
 # Pronouns that refer to the most recent result
 _REF_PRONOUNS = {"that", "it", "the result", "this"}
@@ -498,11 +442,17 @@ def _detect_ref_pattern(msg: str, lower: str) -> ParsedIntent | None:
 
     m = _SEARCH_REF.match(lower)
     if m:
-        return SearchAndSummarizeIntent(query="ref:last")
+        return SkillInvocationIntent(
+            skill_name="search_notes",
+            input={"query": "ref:last"},
+        )
 
     m = _SEARCH_AGAIN.match(lower)
     if m:
-        return SearchAndSummarizeIntent(query="ref:last_search")
+        return SkillInvocationIntent(
+            skill_name="search_notes",
+            input={"query": "ref:last_search"},
+        )
 
     m = _AGAIN_REF.match(lower)
     if m:
@@ -552,11 +502,3 @@ def _parse_generic_input(rest: str) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         pass
     return {"query": rest}
-
-
-def _available_skill_commands(skills: list[SkillInfo]) -> str:
-    """Build help text listing skills available via generic invocation."""
-    names = [s.name for s in skills]
-    if not names:
-        return ""
-    return ", " + ", ".join(f"{n} <input>" for n in sorted(names))

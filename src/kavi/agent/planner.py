@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 from kavi.agent.models import (
-    ChainAction,
     ClarifyIntent,
     HelpIntent,
     ParsedIntent,
     PlannedAction,
-    SearchAndSummarizeIntent,
     SkillAction,
     SkillInvocationIntent,
     TalkIntent,
@@ -16,14 +14,6 @@ from kavi.agent.models import (
     WriteNoteIntent,
     note_path_for_title,
 )
-from kavi.consumer.chain import (
-    ChainOptions,
-    ChainSpec,
-    ChainStep,
-    FieldMapping,
-)
-
-MAX_CHAIN_STEPS = 2
 
 
 def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
@@ -31,8 +21,6 @@ def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
 
     Returns None for unsupported intents (caller handles the error).
     """
-    if isinstance(intent, SearchAndSummarizeIntent):
-        return _plan_search_and_summarize(intent)
     if isinstance(intent, WriteNoteIntent):
         return _plan_write(intent)
     if isinstance(intent, SkillInvocationIntent):
@@ -43,27 +31,6 @@ def intent_to_plan(intent: ParsedIntent) -> PlannedAction | None:
     if isinstance(intent, (UnsupportedIntent, HelpIntent, TalkIntent, ClarifyIntent)):
         return None
     return None
-
-
-def _plan_search_and_summarize(intent: SearchAndSummarizeIntent) -> ChainAction:
-    spec = ChainSpec(
-        steps=[
-            ChainStep(
-                skill_name="search_notes",
-                input={"query": intent.query, "top_k": intent.top_k},
-            ),
-            ChainStep(
-                skill_name="summarize_note",
-                input_template={"style": intent.style},
-                from_prev=[
-                    FieldMapping(to_field="path", from_path="results.0.path"),
-                ],
-            ),
-        ],
-        options=ChainOptions(stop_on_failure=True),
-    )
-    assert len(spec.steps) <= MAX_CHAIN_STEPS
-    return ChainAction(chain=spec)
 
 
 def _plan_write(intent: WriteNoteIntent) -> SkillAction:

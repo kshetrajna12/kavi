@@ -32,6 +32,7 @@ class ToolCallResult(NamedTuple):
 
     name: str
     arguments: dict[str, Any]
+    call_id: str = ""
 
 
 def is_available(base_url: str = SPARK_BASE_URL, timeout: float = 5) -> bool:
@@ -44,34 +45,66 @@ def is_available(base_url: str = SPARK_BASE_URL, timeout: float = 5) -> bool:
         return False
 
 
-def _truncate_messages(
-    messages: list[dict[str, str]],
-    max_chars: int,
-) -> list[dict[str, str]]:
-    """Truncate the last user-role message if total content exceeds max_chars.
+def _content_len(msg: dict[str, Any]) -> int:
+    """Return char length of a message's content (handles None)."""
+    c = msg.get("content")
+    if c is None:
+        return 0
+    return len(str(c))
 
-    System messages are never truncated. Only the last user message is trimmed.
+
+def _truncate_messages(
+    messages: list[dict[str, Any]],
+    max_chars: int,
+) -> list[dict[str, Any]]:
+    """Drop oldest history messages to fit within max_chars (D020).
+
+    Rules:
+    1. Never drop the system message (first) or current user message (last).
+    2. Drop oldest history messages first.  Keep tool-call groups atomic:
+       assistant+tool_calls, tool, assistant = 3 messages together.
+    3. Last resort: truncate the current user message.
     """
-    total = sum(len(m.get("content", "")) for m in messages)
+    total = sum(_content_len(m) for m in messages)
     if total <= max_chars:
         return messages
 
-    overshoot = total - max_chars
-    # Find last user message (iterate in reverse)
     result = list(messages)
-    for i in range(len(result) - 1, -1, -1):
-        if result[i].get("role") == "user":
-            content = result[i]["content"]
-            if len(content) > overshoot:
-                result[i] = {**result[i], "content": content[:-overshoot]}
-            else:
-                result[i] = {**result[i], "content": ""}
-            break
+
+    # Identify protected indices: system (first if role=system) and last message
+    first_history = 1 if result and result[0].get("role") == "system" else 0
+
+    # Drop from oldest history until within budget or only protected remain
+    while sum(_content_len(m) for m in result) > max_chars:
+        if first_history >= len(result) - 1:
+            break  # only system + last message remain
+
+        msg = result[first_history]
+        # Tool-call group: assistant with tool_calls + tool + assistant = 3 msgs
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            count = min(3, len(result) - first_history - 1)  # don't eat last
+            del result[first_history:first_history + count]
+        else:
+            del result[first_history]
+
+    # Last resort: truncate the last user message
+    total = sum(_content_len(m) for m in result)
+    if total > max_chars:
+        overshoot = total - max_chars
+        for i in range(len(result) - 1, -1, -1):
+            if result[i].get("role") == "user":
+                content = str(result[i].get("content", ""))
+                if len(content) > overshoot:
+                    result[i] = {**result[i], "content": content[:-overshoot]}
+                else:
+                    result[i] = {**result[i], "content": ""}
+                break
+
     return result
 
 
 def generate(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     model: str = SPARK_MODEL,
     base_url: str = SPARK_BASE_URL,
@@ -111,7 +144,7 @@ def generate(
 
 
 def generate_tool_call(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     *,
     model: str = SPARK_MODEL,
@@ -157,7 +190,7 @@ def generate_tool_call(
     except (json.JSONDecodeError, TypeError) as exc:
         raise SparkError(f"Invalid tool call arguments: {exc}") from exc
 
-    return ToolCallResult(name=tc.function.name, arguments=args)
+    return ToolCallResult(name=tc.function.name, arguments=args, call_id=tc.id or "")
 
 
 def embed(

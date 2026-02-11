@@ -131,8 +131,8 @@ Local LLM gateway at `http://localhost:8000/v1` (OpenAI-compatible API). Client 
 | Function | Purpose |
 |----------|---------|
 | `is_available()` | Healthcheck via `client.models.list()`. Returns bool. |
-| `generate()` | Chat completion (D019: takes `messages: list[dict]`). Truncates last user message to `SPARK_MAX_PROMPT_CHARS`, enforces `SPARK_TIMEOUT`. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
-| `generate_tool_call()` | Chat completion expecting a tool call (D019). Returns `ToolCallResult(name, arguments)`. Used by the parser for intent classification via 4 tool schemas. |
+| `generate()` | Chat completion (D019: takes `messages: list[dict]`). Group-aware truncation preserves system + current user, drops oldest history atomically (D020). Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
+| `generate_tool_call()` | Chat completion expecting a tool call. Returns `ToolCallResult(name, arguments, call_id)`. Used by the parser for intent classification via per-skill tool schemas (D020) + static tools (talk, clarify, meta). |
 | `embed()` | Batch text embeddings. Returns `list[list[float]]`, sorted by index. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
 
 Configuration in `kavi.config`:
@@ -470,8 +470,9 @@ The agent layer (`kavi.agent`) is a bounded conversational interface over truste
 
 ### Boundaries
 
-- **At most one execution per message**: either a single `consume_skill` call, or a fixed 2-step `consume_chain` (search → summarize).
+- **At most one execution per message**: a single `consume_skill` call.
 - **No loops, no retries, no multi-step planning.**
+- **Conversation history (D020)**: the REPL accumulates message history (sliding window of 40 messages) on SessionContext. Tool invocations are recorded as 4-message groups (user, assistant+tool_calls, tool, assistant); talk turns as user/assistant pairs.
 - **Anchor-based session context (D015)**: the REPL maintains a sliding window of up to 10 anchors from prior execution results. Users can refer to previous results with "that", "it", "again", `ref:last`, or `ref:last_<skill>`. In single-turn mode (`kavi chat -m`), no session is maintained.
 - **Transparent**: every response includes the parsed intent, planned action, and execution records.
 
@@ -479,9 +480,8 @@ The agent layer (`kavi.agent`) is a bounded conversational interface over truste
 
 | Intent | Kind | Execution |
 |--------|------|-----------|
-| Search and summarize | `search_and_summarize` | 2-step chain: `search_notes` → `summarize_note` |
 | Write a note | `write_note` | Single skill: `write_note` (requires confirmation) |
-| Generic skill invocation | `skill_invocation` | Single skill by name (e.g. `summarize_note`, `http_get_json`) |
+| Generic skill invocation | `skill_invocation` | Single skill by name (e.g. `search_notes`, `summarize_note`, `http_get_json`) |
 | Refine/correct | `transform` | Re-invoke target skill with field overrides (resolver → `skill_invocation`) |
 | Help / skills listing | `help` | Returns formatted skills index (no execution) |
 
@@ -494,17 +494,17 @@ User message
     ↓
 parse_intent()    ← Sparkstation (one call) OR deterministic fallback
     ↓                (detects ref patterns: "that"/"it"/"again" → ref:last)
-ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | transform | help | talk | unsupported
+ParsedIntent      ← discriminated union: write_note | skill_invocation | transform | help | talk | clarify
     ↓
 resolve_refs()    ← binds ref:last / ref:last_<skill> to anchor values (D015)
     ↓
 intent_to_plan()  ← purely deterministic, no LLM
     ↓
-PlannedAction     ← SkillAction (single skill) or ChainAction (ChainSpec)
+PlannedAction     ← SkillAction (single skill)
     ↓
 chat policy gate  ← blocks skills whose side-effect class isn't in allowed set
     ↓
-execute           ← consume_skill() or consume_chain()
+execute           ← consume_skill()
     ↓
 extract_anchors() ← updates session with new anchors from execution records
     ↓
@@ -524,7 +524,7 @@ AgentResponse     ← intent + plan + records + session + error
 
 ### Parser fallback (frozen — D018)
 
-LLM parsing uses tool calling (D019: 4 tool schemas — `talk`, `invoke_skill`, `clarify`, `meta`). When Sparkstation is unavailable or tool call parsing fails, the parser falls back to deterministic heuristics. These patterns are a frozen stability floor — new skills MUST NOT add new regexes:
+LLM parsing uses tool calling with per-skill tool schemas (D020) plus static tools (`talk`, `clarify`, `meta`). Each registered skill is exposed as its own tool with typed parameters. Full conversation history is threaded from `session.messages`. When Sparkstation is unavailable or tool call parsing fails, the parser falls back to deterministic heuristics. These patterns are a frozen stability floor — new skills MUST NOT add new regexes:
 - `summarize <path>` → `SkillInvocationIntent(summarize_note)`
 - `summarize that/it/the result` → `SkillInvocationIntent` with `ref:last` (D015)
 - `write <title>\n<body>` → `WriteNoteIntent`
@@ -533,9 +533,9 @@ LLM parsing uses tool calling (D019: 4 tool schemas — `talk`, `invoke_skill`, 
 - `but paragraph`/`make it bullet`/`no, paragraph` → `TransformIntent` with style override
 - `try X.md instead`/`no, X.md` → `TransformIntent` with path override
 - `again [paragraph]` / `do it again` → re-run with `ref:last` (D015)
-- `search/find for that/it` → `SearchAndSummarizeIntent` with `ref:last` (D015)
-- `search/find again` → `SearchAndSummarizeIntent` with `ref:last_search` (D015)
-- `search/find <query>` → `SearchAndSummarizeIntent`
+- `search/find for that/it` → `SkillInvocationIntent(search_notes)` with `ref:last` (D015)
+- `search/find again` → `SkillInvocationIntent(search_notes)` with `ref:last_search` (D015)
+- `search/find <query>` → `SkillInvocationIntent(search_notes)`
 - `<skill_name> <json>` → `SkillInvocationIntent` (generic, for any registered skill)
 - Anything else → `TalkIntent`
 

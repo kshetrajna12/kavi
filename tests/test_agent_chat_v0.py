@@ -15,11 +15,9 @@ from kavi.agent.constants import CHAT_DEFAULT_ALLOWED_EFFECTS
 from kavi.agent.core import handle_message
 from kavi.agent.models import (
     AgentResponse,
-    ChainAction,
     ClarifyIntent,
     HelpIntent,
     ParsedIntent,
-    SearchAndSummarizeIntent,
     SkillAction,
     SkillInvocationIntent,
     TalkIntent,
@@ -380,83 +378,44 @@ def _ctx(llm_return=None, llm_error=None, talk_return=None):
 class TestParserLLMSuccess:
     """parse_intent with mocked Sparkstation returning tool calls (D019)."""
 
-    def test_search_and_summarize(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "search_and_summarize",
-            "input": {"query": "machine learning", "top_k": 3},
-        })
-        with patch(_GEN, return_value=tc):
-            intent, warnings = parse_intent(
-                "find notes about machine learning", SKILL_INFOS,
-            )
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "machine learning"
-        assert intent.top_k == 3
-        assert warnings == []
-
     def test_summarize_note_via_invoke_skill(self) -> None:
-        """LLM returning invoke_skill(summarize_note) → SkillInvocationIntent."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "notes/ml.md"},
-        })
+        """LLM returning summarize_note tool → SkillInvocationIntent."""
+        tc = ToolCallResult("summarize_note", {"path": "notes/ml.md"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "summarize_note"
         assert intent.input["path"] == "notes/ml.md"
 
     def test_write_note(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "Test", "body": "Hello world"},
-        })
+        tc = ToolCallResult("write_note", {"title": "Test", "body": "Hello world"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "write a note called Test", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, WriteNoteIntent)
         assert intent.title == "Test"
         assert intent.body == "Hello world"
 
-    def test_write_note_strips_echoed_instruction(self) -> None:
-        """LLM echoing user instruction as body → stripped to empty."""
-        msg = "write all of this into a note called indianapolis.md"
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "Indianapolis", "body": msg},
-        })
-        with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(msg, SKILL_INFOS)
-        assert isinstance(intent, WriteNoteIntent)
-        assert intent.title == "Indianapolis"
-        assert intent.body == ""
-
     def test_write_note_keeps_real_body(self) -> None:
         """Legitimate body content is preserved."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "Test", "body": "Some actual content here"},
-        })
+        tc = ToolCallResult("write_note", {"title": "Test", "body": "Some actual content here"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "write a note called Test with content", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, WriteNoteIntent)
         assert intent.body == "Some actual content here"
 
     def test_write_note_ref_last_preserved(self) -> None:
         """ref:last body is not stripped."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "Notes", "body": "ref:last"},
-        })
+        tc = ToolCallResult("write_note", {"title": "Notes", "body": "ref:last"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "write that to a note", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, WriteNoteIntent)
         assert intent.body == "ref:last"
 
@@ -466,9 +425,9 @@ class TestParserLLMSuccess:
             "message": "I can't help with that.",
         })
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "delete everything", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, TalkIntent)
 
     def test_clarify_intent(self) -> None:
@@ -477,9 +436,9 @@ class TestParserLLMSuccess:
             "question": "Which note would you like to summarize?",
         })
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "summarize", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, ClarifyIntent)
         assert "which" in intent.question.lower()
 
@@ -487,30 +446,26 @@ class TestParserLLMSuccess:
         """meta(command=help) → HelpIntent."""
         tc = ToolCallResult("meta", {"command": "help"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "what can you do", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, HelpIntent)
 
     def test_no_warnings_from_tool_calls(self) -> None:
         """Tool call results produce empty warnings list."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "a.md"},
-        })
+        tc = ToolCallResult("summarize_note", {"path": "a.md"})
         with patch(_GEN, return_value=tc):
-            _, warnings = parse_intent(
+            result = parse_intent(
                 "summarize a.md", SKILL_INFOS,
             )
-        assert warnings == []
+        assert result.warnings == []
 
 
 class TestParserDeterministic:
     """parse_intent with mode='deterministic' — explicit prefixes only."""
 
     def _parse(self, msg: str) -> ParsedIntent:
-        intent, _ = parse_intent(msg, SKILL_INFOS, mode="deterministic")
-        return intent
+        return parse_intent(msg, SKILL_INFOS, mode="deterministic").intent
 
     def test_summarize_path(self) -> None:
         intent = self._parse("summarize notes/ml.md")
@@ -537,13 +492,15 @@ class TestParserDeterministic:
 
     def test_search_query(self) -> None:
         intent = self._parse("search machine learning")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "machine learning"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "machine learning"
 
     def test_find_query(self) -> None:
         intent = self._parse("find notes about python")
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert intent.query == "python"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "search_notes"
+        assert intent.input["query"] == "python"
 
     def test_unmatched_becomes_talk(self) -> None:
         intent = self._parse("do something random")
@@ -599,22 +556,22 @@ class TestParserDeterministic:
 
         err = SparkUnavailableError("down")
         with patch(_GEN, side_effect=err):
-            intent, warnings = parse_intent(
+            result = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
         # Falls back to deterministic → SkillInvocationIntent
-        assert isinstance(intent, SkillInvocationIntent)
-        assert intent.skill_name == "summarize_note"
-        assert warnings == []
+        assert isinstance(result.intent, SkillInvocationIntent)
+        assert result.intent.skill_name == "summarize_note"
+        assert result.warnings == []
 
     def test_spark_error_triggers_fallback(self) -> None:
         from kavi.llm.spark import SparkError
 
         err = SparkError("no tool call")
         with patch(_GEN, side_effect=err):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "summarize_note"
 
@@ -622,9 +579,9 @@ class TestParserDeterministic:
         """Bad tool call args trigger fallback to deterministic."""
 
         with patch(_GEN, side_effect=ValueError("bad args")):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
-            )
+            ).intent
         # Falls back to deterministic → matches "summarize <path>"
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "summarize_note"
@@ -634,69 +591,63 @@ class TestParserSkillInvocation:
     """Tests for the generic SkillInvocationIntent path."""
 
     def test_llm_returns_skill_invocation(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "read_notes_by_tag",
-            "input": {"tag": "cooking"},
-        })
+        tc = ToolCallResult("read_notes_by_tag", {"tag": "cooking"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "show me notes tagged cooking", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "read_notes_by_tag"
         assert intent.input == {"tag": "cooking"}
 
     def test_llm_returns_http_get_json(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "http_get_json",
-            "input": {
-                "url": "https://api.example.com/data",
-                "allowed_hosts": ["api.example.com"],
-            },
+        tc = ToolCallResult("http_get_json", {
+            "url": "https://api.example.com/data",
+            "allowed_hosts": ["api.example.com"],
         })
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "get data from api.example.com", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "http_get_json"
 
     def test_deterministic_generic_skill_name_json(self) -> None:
         """Typing a skill name + JSON works."""
-        intent, _ = parse_intent(
+        intent = parse_intent(
             'read_notes_by_tag {"tag": "ml"}', SKILL_INFOS,
             mode="deterministic",
-        )
+        ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "read_notes_by_tag"
         assert intent.input == {"tag": "ml"}
 
     def test_deterministic_generic_skill_non_json(self) -> None:
         """Non-JSON rest goes into {"query": rest}."""
-        intent, _ = parse_intent(
+        intent = parse_intent(
             "read_notes_by_tag cooking", SKILL_INFOS,
             mode="deterministic",
-        )
+        ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.input == {"query": "cooking"}
 
     def test_deterministic_http_get_json_explicit(self) -> None:
         """http_get_json requires explicit skill_name + JSON form."""
-        intent, _ = parse_intent(
+        intent = parse_intent(
             'http_get_json {"url": "https://api.example.com", '
             '"allowed_hosts": ["api.example.com"]}',
             SKILL_INFOS,
             mode="deterministic",
-        )
+        ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "http_get_json"
         assert intent.input["url"] == "https://api.example.com"
 
     def test_unmatched_becomes_talk_with_message(self) -> None:
         """Unmatched input returns TalkIntent preserving the message."""
-        intent, _ = parse_intent(
+        intent = parse_intent(
             "do something weird", SKILL_INFOS, mode="deterministic",
-        )
+        ).intent
         assert isinstance(intent, TalkIntent)
         assert intent.message == "do something weird"
 
@@ -705,14 +656,6 @@ class TestParserSkillInvocation:
 
 
 class TestPlanner:
-    def test_search_and_summarize_produces_chain(self) -> None:
-        intent = SearchAndSummarizeIntent(query="ml", top_k=3)
-        plan = intent_to_plan(intent)
-        assert isinstance(plan, ChainAction)
-        assert len(plan.chain.steps) == 2
-        assert plan.chain.steps[0].skill_name == "search_notes"
-        assert plan.chain.steps[1].skill_name == "summarize_note"
-
     def test_summarize_via_skill_invocation(self) -> None:
         """summarize_note goes through SkillInvocationIntent now."""
         intent = SkillInvocationIntent(
@@ -750,12 +693,6 @@ class TestPlanner:
         intent = TalkIntent(message="hello")
         assert intent_to_plan(intent) is None
 
-    def test_chain_max_two_steps(self) -> None:
-        intent = SearchAndSummarizeIntent(query="anything", top_k=10)
-        plan = intent_to_plan(intent)
-        assert isinstance(plan, ChainAction)
-        assert len(plan.chain.steps) <= 2
-
 
 # ── AgentCore integration tests ──────────────────────────────────────
 
@@ -763,29 +700,24 @@ class TestPlanner:
 class TestHandleMessage:
     """Full pipeline: parse -> plan -> execute via mocked consumer."""
 
-    def test_search_and_summarize_happy_path(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "search_and_summarize",
-            "input": {"query": "ml"},
-        })
+    def test_search_happy_path(self) -> None:
+        tc = ToolCallResult("search_notes", {"query": "ml"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "find ml notes", registry_path=FAKE_REGISTRY,
             )
         assert isinstance(resp, AgentResponse)
-        assert isinstance(resp.intent, SearchAndSummarizeIntent)
-        assert isinstance(resp.plan, ChainAction)
-        assert len(resp.records) == 2
-        assert all(r.success for r in resp.records)
+        assert isinstance(resp.intent, SkillInvocationIntent)
+        assert isinstance(resp.plan, SkillAction)
+        assert len(resp.records) == 1
+        assert resp.records[0].success
+        assert resp.records[0].skill_name == "search_notes"
         assert resp.error is None
         assert not resp.needs_confirmation
 
     def test_summarize_happy_path(self) -> None:
-        """invoke_skill(summarize_note) → SkillInvocationIntent."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "notes/ml.md"},
-        })
+        """summarize_note tool → SkillInvocationIntent."""
+        tc = ToolCallResult("summarize_note", {"path": "notes/ml.md"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize notes/ml.md",
@@ -800,10 +732,7 @@ class TestHandleMessage:
 
     def test_write_needs_confirmation_single_turn(self) -> None:
         """FILE_WRITE returns needs_confirmation when not confirmed."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "Test", "body": "hi"},
-        })
+        tc = ToolCallResult("write_note", {"title": "Test", "body": "hi"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "write Test\nhi", registry_path=FAKE_REGISTRY,
@@ -814,10 +743,7 @@ class TestHandleMessage:
 
     def test_write_confirmed_executes(self) -> None:
         """With confirmed=True, FILE_WRITE executes normally."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "Test", "body": "hi"},
-        })
+        tc = ToolCallResult("write_note", {"title": "Test", "body": "hi"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "write Test\nhi",
@@ -853,10 +779,7 @@ class TestHandleMessage:
 
     def test_response_serializes_to_json(self) -> None:
         """AgentResponse can round-trip through JSON."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "a.md"},
-        })
+        tc = ToolCallResult("summarize_note", {"path": "a.md"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md", registry_path=FAKE_REGISTRY,
@@ -868,10 +791,7 @@ class TestHandleMessage:
         assert data["warnings"] == []
 
     def test_no_warnings_by_default(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "a.md"},
-        })
+        tc = ToolCallResult("summarize_note", {"path": "a.md"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md", registry_path=FAKE_REGISTRY,
@@ -880,10 +800,7 @@ class TestHandleMessage:
 
     def test_read_notes_by_tag_auto_executes(self) -> None:
         """READ_ONLY skill invocation executes without confirmation."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "read_notes_by_tag",
-            "input": {"tag": "cooking"},
-        })
+        tc = ToolCallResult("read_notes_by_tag", {"tag": "cooking"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "notes tagged cooking", registry_path=FAKE_REGISTRY,
@@ -1027,12 +944,9 @@ class TestChatPolicy:
 
     def test_network_blocked_by_default(self) -> None:
         """NETWORK skills are blocked under default chat policy."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "http_get_json",
-            "input": {
-                "url": "https://api.example.com/data",
-                "allowed_hosts": ["api.example.com"],
-            },
+        tc = ToolCallResult("http_get_json", {
+            "url": "https://api.example.com/data",
+            "allowed_hosts": ["api.example.com"],
         })
         with _ctx(llm_return=tc):
             resp = handle_message(
@@ -1046,12 +960,9 @@ class TestChatPolicy:
 
     def test_network_allowed_with_explicit_effects(self) -> None:
         """NETWORK skill works when allowed_effects includes NETWORK."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "http_get_json",
-            "input": {
-                "url": "https://api.example.com/data",
-                "allowed_hosts": ["api.example.com"],
-            },
+        tc = ToolCallResult("http_get_json", {
+            "url": "https://api.example.com/data",
+            "allowed_hosts": ["api.example.com"],
         })
         with _ctx(llm_return=tc):
             resp = handle_message(
@@ -1066,12 +977,9 @@ class TestChatPolicy:
 
     def test_network_still_needs_confirmation(self) -> None:
         """Even with allowed_effects, NETWORK needs confirmation."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "http_get_json",
-            "input": {
-                "url": "https://api.example.com/data",
-                "allowed_hosts": ["api.example.com"],
-            },
+        tc = ToolCallResult("http_get_json", {
+            "url": "https://api.example.com/data",
+            "allowed_hosts": ["api.example.com"],
         })
         with _ctx(llm_return=tc):
             resp = handle_message(
@@ -1125,8 +1033,9 @@ class TestHandleMessageFallback:
                 "search machine learning",
                 registry_path=FAKE_REGISTRY,
             )
-        assert isinstance(resp.intent, SearchAndSummarizeIntent)
-        assert len(resp.records) == 2
+        assert isinstance(resp.intent, SkillInvocationIntent)
+        assert resp.intent.skill_name == "search_notes"
+        assert len(resp.records) == 1
 
     def test_fallback_talk(self) -> None:
         """Spark down + unmatched input → TalkIntent with fallback response."""
@@ -1169,8 +1078,9 @@ class TestDeterministicParseMode:
                 registry_path=FAKE_REGISTRY,
                 parse_mode="deterministic",
             )
-        assert isinstance(resp.intent, SearchAndSummarizeIntent)
-        assert len(resp.records) == 2
+        assert isinstance(resp.intent, SkillInvocationIntent)
+        assert resp.intent.skill_name == "search_notes"
+        assert len(resp.records) == 1
 
     def test_deterministic_summarize_works(self) -> None:
         with _ctx():
@@ -1208,25 +1118,12 @@ class TestDeterministicParseMode:
         assert resp.records == []
 
 
-class TestChainLengthEnforcement:
-    """Ensure max 2 steps is enforced for chain plans."""
-
-    def test_search_and_summarize_chain_is_two_steps(self) -> None:
-        intent = SearchAndSummarizeIntent(query="test")
-        plan = intent_to_plan(intent)
-        assert isinstance(plan, ChainAction)
-        assert len(plan.chain.steps) == 2
-
-
 class TestExecutionLogging:
     """Verify records are logged when log_path is provided."""
 
     def test_records_logged_to_jsonl(self, tmp_path: Path) -> None:
         log_file = tmp_path / "test.jsonl"
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "a.md"},
-        })
+        tc = ToolCallResult("summarize_note", {"path": "a.md"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md",
@@ -1240,10 +1137,7 @@ class TestExecutionLogging:
         assert rec["skill_name"] == "summarize_note"
 
     def test_no_log_when_path_is_none(self) -> None:
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "summarize_note",
-            "input": {"path": "a.md"},
-        })
+        tc = ToolCallResult("summarize_note", {"path": "a.md"})
         with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md",
@@ -1300,8 +1194,7 @@ class TestHelpIntentDeterministic:
     """Deterministic parser returns HelpIntent for help patterns."""
 
     def _parse(self, msg: str) -> ParsedIntent:
-        intent, _ = parse_intent(msg, SKILL_INFOS, mode="deterministic")
-        return intent
+        return parse_intent(msg, SKILL_INFOS, mode="deterministic").intent
 
     def test_help(self) -> None:
         assert isinstance(self._parse("help"), HelpIntent)
@@ -1322,7 +1215,7 @@ class TestHelpIntentLLM:
     def test_llm_help_via_meta(self) -> None:
         tc = ToolCallResult("meta", {"command": "help"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent("what can you do", SKILL_INFOS)
+            intent = parse_intent("what can you do", SKILL_INFOS).intent
         assert isinstance(intent, HelpIntent)
 
 
@@ -1434,20 +1327,6 @@ class TestExecutePlan:
         assert len(resp.records) == 1
         assert resp.records[0].success
         assert resp.records[0].skill_name == "summarize_note"
-
-    def test_executes_chain_action(self) -> None:
-        from kavi.agent.core import execute_plan
-
-        plan = intent_to_plan(SearchAndSummarizeIntent(query="ml"))
-        assert isinstance(plan, ChainAction)
-        with _ctx():
-            resp = execute_plan(
-                plan,
-                SearchAndSummarizeIntent(query="ml"),
-                registry_path=FAKE_REGISTRY,
-            )
-        assert resp.error is None
-        assert len(resp.records) == 2
 
     def test_updates_session(self) -> None:
         from kavi.agent.core import execute_plan
@@ -1932,21 +1811,18 @@ class TestParserCreativeVsSave:
         """'write a poem about my dogs' → talk (generation, not save)."""
         tc = ToolCallResult("talk", {"message": "write a poem about my dogs"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "write a poem about my dogs", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, TalkIntent)
 
     def test_save_to_note_routes_to_write_note(self) -> None:
-        """'write that to a note' → invoke_skill(write_note)."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "ref:last", "body": "ref:last"},
-        })
+        """'write that to a note' → write_note tool call."""
+        tc = ToolCallResult("write_note", {"title": "ref:last", "body": "ref:last"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "write that to a note", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, WriteNoteIntent)
 
 
@@ -1955,28 +1831,22 @@ class TestParserActionRef:
 
     def test_llm_routes_daily_ref(self) -> None:
         """'write that to my daily notes' → create_daily_note with ref:last."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "create_daily_note",
-            "input": {"content": "ref:last"},
-        })
+        tc = ToolCallResult("create_daily_note", {"content": "ref:last"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "write that to my daily notes", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "create_daily_note"
         assert intent.input["content"] == "ref:last"
 
     def test_llm_routes_generic_write_ref(self) -> None:
-        """'save that to a note' → invoke_skill(write_note)."""
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "write_note",
-            "input": {"title": "ref:last", "body": "ref:last"},
-        })
+        """'save that to a note' → write_note tool call."""
+        tc = ToolCallResult("write_note", {"title": "ref:last", "body": "ref:last"})
         with patch(_GEN, return_value=tc):
-            intent, _ = parse_intent(
+            intent = parse_intent(
                 "save that to a note", SKILL_INFOS,
-            )
+            ).intent
         assert isinstance(intent, WriteNoteIntent)
 
 

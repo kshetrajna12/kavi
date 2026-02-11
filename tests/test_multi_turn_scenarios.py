@@ -60,12 +60,11 @@ class TestHappyPathScenario:
         # Turn 1: search notes about machine learning
         resp = _turn("search ml", session)
         assert resp.error is None
-        assert len(resp.records) == 2  # search + summarize chain
+        assert len(resp.records) == 1  # search_notes only (D020)
         assert resp.records[0].skill_name == "search_notes"
-        assert resp.records[1].skill_name == "summarize_note"
         session = resp.session
         assert session is not None
-        assert len(session.anchors) == 2
+        assert len(session.anchors) == 1
 
         # Turn 2: summarize that (top search result)
         resp = _turn("summarize that", session)
@@ -98,7 +97,7 @@ class TestHappyPathScenario:
         # Turn 5: search again (re-uses last search query)
         resp = _turn("search again", session)
         assert resp.error is None
-        assert len(resp.records) == 2  # search + summarize chain
+        assert len(resp.records) == 1  # search_notes only (D020)
         session = resp.session
         assert session is not None
 
@@ -122,7 +121,7 @@ class TestHappyPathScenario:
         # Turn 8: search for that (uses last anchor value as query)
         resp = _turn("search for that", session)
         assert resp.error is None
-        assert len(resp.records) == 2
+        assert len(resp.records) == 1  # search_notes only (D020)
         session = resp.session
         assert session is not None
 
@@ -135,8 +134,7 @@ class TestHappyPathScenario:
         assert resp.session is session or resp.session is not None
 
         # Turn 10: again (re-invokes last executed skill)
-        # Last executed was search+summarize chain — "again" re-invokes
-        # the last anchor's skill (search_notes from the chain)
+        # Last executed was search_notes — "again" re-invokes it
         resp = _turn("again", session)
         assert resp.error is None
         assert len(resp.records) >= 1
@@ -144,7 +142,7 @@ class TestHappyPathScenario:
         assert session is not None
 
         # Verify session accumulated anchors across all turns
-        assert len(session.anchors) == 10  # max window
+        assert len(session.anchors) == 9
 
 
 class TestFailureRecoveryScenario:
@@ -173,7 +171,7 @@ class TestFailureRecoveryScenario:
         # Turn 3: search for related content
         resp = _turn("search ml", session)
         assert resp.error is None
-        assert len(resp.records) == 2
+        assert len(resp.records) == 1  # search_notes only (D020)
         session = resp.session
         assert session is not None
 

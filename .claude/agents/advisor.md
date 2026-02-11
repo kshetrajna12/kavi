@@ -1,7 +1,7 @@
 ---
 name: advisor
 description: Kavi project advisor. Use when the user wants a critique of current code state, consistency check, or guidance on what to work on next. Proactively reviews the codebase against design decisions and invariants.
-tools: Read, Grep, Glob, Bash, Python
+tools: Read, Grep, Glob, Bash, Python, WebSearch, WebFetch
 model: opus
 memory: project
 ---

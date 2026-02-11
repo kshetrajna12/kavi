@@ -19,7 +19,6 @@ from unittest.mock import patch
 
 from kavi.agent.core import confirm_pending, handle_message
 from kavi.agent.models import (
-    SearchAndSummarizeIntent,
     SessionContext,
     SkillInvocationIntent,
     TalkIntent,
@@ -58,7 +57,7 @@ class TestScenarioSearchSummarizeRefineWrite:
         assert r1.records[0].side_effect_class == "NONE"
         session = r1.session or session
 
-        # Turn 2: Search (SearchAndSummarizeIntent → chain)
+        # Turn 2: Search (SkillInvocationIntent → search_notes)
         with _ctx():
             r2 = handle_message(
                 "search machine learning",
@@ -66,11 +65,11 @@ class TestScenarioSearchSummarizeRefineWrite:
                 parse_mode="deterministic",
                 session=session,
             )
-        assert isinstance(r2.intent, SearchAndSummarizeIntent)
+        assert isinstance(r2.intent, SkillInvocationIntent)
+        assert r2.intent.skill_name == "search_notes"
         assert r2.error is None
-        assert len(r2.records) == 2
+        assert len(r2.records) == 1
         assert r2.records[0].skill_name == "search_notes"
-        assert r2.records[1].skill_name == "summarize_note"
         session = r2.session or session
 
         # Verify session has anchors from both talk and search
@@ -278,7 +277,7 @@ class TestScenarioFailureRecovery:
                 session=session,
             )
         assert r3.error is None
-        assert len(r3.records) == 2  # search + summarize chain
+        assert len(r3.records) == 1
         session = r3.session or session
 
         # Turn 4: Talk still works after error
@@ -321,7 +320,7 @@ class TestScenarioPresenterFormatting:
             )
         out = present(resp, verbose=True)
         assert "Intent:" in out
-        assert "search_and_summarize" in out
+        assert "skill_invocation" in out
         assert "Plan:" in out
         assert "Records" in out
         assert "timing:" in out
@@ -398,13 +397,12 @@ class TestScenarioTalkLogging:
         lines = log_file.read_text().strip().split("\n")
         records = [json.loads(line) for line in lines]
 
-        # Turn 1: __talk__, Turn 2: search_notes + summarize_note, Turn 3: __talk__
-        assert len(records) == 4
+        # Turn 1: __talk__, Turn 2: search_notes, Turn 3: __talk__
+        assert len(records) == 3
         assert records[0]["skill_name"] == "__talk__"
         assert records[0]["side_effect_class"] == "NONE"
         assert records[1]["skill_name"] == "search_notes"
-        assert records[2]["skill_name"] == "summarize_note"
-        assert records[3]["skill_name"] == "__talk__"
+        assert records[2]["skill_name"] == "__talk__"
 
     def test_anchor_binding_across_turns(self) -> None:
         """Session anchors from earlier turns are available in later turns."""
@@ -430,8 +428,8 @@ class TestScenarioTalkLogging:
                 session=session,
             )
         session = r2.session or session
-        # Talk + search + summarize = 3 anchors
-        assert len(session.anchors) == 3
+        # Talk + search = 2 anchors
+        assert len(session.anchors) == 2
 
         # Turn 3: "summarize that" — should resolve to last summarize
         with _ctx():
@@ -472,9 +470,8 @@ class TestScenarioTalkThenDailyNote:
         assert any(a.skill_name == "__talk__" for a in session.anchors)
 
         # Turn 2: "write that to my daily notes" — LLM tool call
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "create_daily_note",
-            "input": {"content": "ref:last"},
+        tc = ToolCallResult("create_daily_note", {
+            "content": "ref:last",
         })
         with _ctx(llm_return=tc):
             r2 = handle_message(
@@ -525,9 +522,8 @@ class TestScenarioTalkThenDailyNote:
         session = r1.session or session
 
         # Turn 2: "add that to daily" via LLM tool call
-        tc = ToolCallResult("invoke_skill", {
-            "skill_name": "create_daily_note",
-            "input": {"content": "ref:last"},
+        tc = ToolCallResult("create_daily_note", {
+            "content": "ref:last",
         })
         with _ctx(llm_return=tc):
             r2 = handle_message(

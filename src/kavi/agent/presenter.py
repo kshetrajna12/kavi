@@ -103,10 +103,6 @@ def _format_confirmation(resp: AgentResponse) -> str:
 
         return f"I'll run {skill} — okay?"
 
-    if kind == "search_and_summarize":
-        query = getattr(intent, "query", "")
-        return f"I'll search and summarize notes about '{query}' — okay?"
-
     # Fallback
     plan = resp.pending.plan if resp.pending else resp.plan
     if plan is not None:

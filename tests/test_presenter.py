@@ -8,7 +8,6 @@ from kavi.agent.models import (
     ClarifyIntent,
     HelpIntent,
     PendingConfirmation,
-    SearchAndSummarizeIntent,
     SessionContext,
     SkillAction,
     SkillInvocationIntent,
@@ -196,7 +195,7 @@ class TestConversationalSuccess:
             ],
         })
         resp = AgentResponse(
-            intent=SearchAndSummarizeIntent(query="ml"),
+            intent=SkillInvocationIntent(skill_name="search_notes", input={"query": "ml"}),
             records=[rec],
         )
         out = present(resp)
@@ -329,7 +328,7 @@ class TestConversationalWarnings:
     def test_warnings_shown(self) -> None:
         rec = _record("search_notes", {"query": "ml", "results": []})
         resp = AgentResponse(
-            intent=SearchAndSummarizeIntent(query="ml"),
+            intent=SkillInvocationIntent(skill_name="search_notes", input={"query": "ml"}),
             records=[rec],
             warnings=["Ignored: write_note. Ask separately."],
         )
@@ -376,7 +375,7 @@ class TestVerboseMode:
     def test_shows_records(self) -> None:
         rec = _record("search_notes", {"query": "ml", "results": []})
         resp = AgentResponse(
-            intent=SearchAndSummarizeIntent(query="ml"),
+            intent=SkillInvocationIntent(skill_name="search_notes", input={"query": "ml"}),
             records=[rec],
         )
         out = present(resp, verbose=True)
@@ -440,7 +439,7 @@ class TestVerboseMode:
         """Verbose mode includes JSON representations for inspectability."""
         rec = _record("search_notes", {"query": "ml", "results": []})
         resp = AgentResponse(
-            intent=SearchAndSummarizeIntent(query="ml"),
+            intent=SkillInvocationIntent(skill_name="search_notes", input={"query": "ml"}),
             plan=ChainAction(
                 chain=ChainSpec(steps=[
                     ChainStep(skill_name="search_notes", input={"query": "ml"}),
@@ -450,6 +449,6 @@ class TestVerboseMode:
         )
         out = present(resp, verbose=True)
         # Should contain JSON-formatted data
-        assert '"search_and_summarize"' in out
+        assert '"skill_invocation"' in out
         assert "input:" in out
         assert "output:" in out

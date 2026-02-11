@@ -12,7 +12,6 @@ from kavi.agent.models import (
     AmbiguityResponse,
     Anchor,
     ParsedIntent,
-    SearchAndSummarizeIntent,
     SessionContext,
     SkillInvocationIntent,
     TransformIntent,
@@ -241,24 +240,6 @@ def resolve_refs(
                 input schema. When None, all anchor data is copied.
     """
     if session is None:
-        return intent
-
-    # SearchAndSummarizeIntent: resolve ref: in query field
-    if isinstance(intent, SearchAndSummarizeIntent) and intent.query.startswith("ref:"):
-        ref = intent.query[4:]
-        anchor = session.resolve(ref)
-        if anchor is None:
-            return AmbiguityResponse(
-                ref=ref,
-                candidates=[],
-                message=f"Could not resolve '{ref}' — no prior results "
-                "to reference. Try running a command first.",
-            )
-        value = _search_anchor_value(anchor)
-        if value is not None:
-            return SearchAndSummarizeIntent(
-                query=value, top_k=intent.top_k, style=intent.style,
-            )
         return intent
 
     # WriteNoteIntent: resolve ref: markers in title/body
