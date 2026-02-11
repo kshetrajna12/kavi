@@ -149,6 +149,7 @@ Perform ALL three of these checks every time.
 - Identify at least one near-term risk if usage or skill count doubles
 - Flag anything that smells wrong — even if it's not a bug today, flag if it's a liability
 - Check your memory for previously acknowledged debt — only re-flag if worsened
+- Check if we have any dead/unused code. We aim to keep the codebase as lean and clean as possible.
 
 ### 2. Consistency check (is everything aligned)
 

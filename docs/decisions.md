@@ -417,3 +417,47 @@ The `_looks_like_action_ref` escalation heuristic was added as a band-aid: when 
 - The `_looks_like_action_ref` function, `_ACTION_VERBS`, `_REF_WORDS`, and `_REF_PHRASES` have been removed.
 - Test suites that pass `parse_mode="deterministic"` are testing the fallback path, not the primary path.
 - Future mode rename (e.g. "local" vs "llm") is an option but not required by this decision.
+
+---
+
+## D019: Role-separated messages and tool-call parsing for Sparkstation (2026-02-10)
+
+**Status:** `CURRENT`
+
+**Context:** `generate()` took a single `prompt: str`. All callers concatenated system and user content into one flat string sent as `{"role": "user"}`. The parser used free-form JSON responses with `_parse_json_response()` and `_dict_to_intent()`. Both patterns were fragile — no role separation, no structured output.
+
+**Decision:**
+
+1. **`generate()` takes `messages: list[dict[str, str]]`.** No backward compat. All callers migrated in one pass.
+2. **New `generate_tool_call()` function** returns a `ToolCallResult(name, arguments)` NamedTuple. Uses the OpenAI-compatible tool calling API (`tools`, `tool_choice`, `tool_calls` in response).
+3. **Parser uses 4 tool schemas** instead of free-form JSON: `talk`, `invoke_skill`, `clarify`, `meta`. The model picks a tool; we validate args and convert to internal Intent objects via `_tool_call_to_intent()`.
+4. **New `ClarifyIntent`** for when the model needs more information from the user.
+5. **Talk, summarize, and research callers** use plain system/user messages — no tool calling.
+6. **Truncation** only applies to the last user-role message. System messages are never truncated.
+
+**Changes to intent flow:**
+
+| Before (D018) | After (D019) |
+|---|---|
+| LLM returns JSON with 7 `kind` values | LLM calls 1 of 4 tools |
+| `_parse_json_response()` + `_dict_to_intent()` | `_tool_call_to_intent()` |
+| `UnsupportedIntent` emitted by LLM | Removed from LLM path; harmful requests route to `talk` |
+| No ClarifyIntent | `clarify` tool → `ClarifyIntent` |
+| `WriteNoteIntent`/`SearchAndSummarizeIntent` emitted by LLM | Constructed from `invoke_skill(skill_name=...)` by `_tool_call_to_intent()` |
+
+**Guardrails:**
+- Tool call output never reaches `exec()`/`eval()`. The governance pipeline (resolve_refs → intent_to_plan → policy gate → confirmation gate → consume_skill → trust-verified load) is unchanged.
+- `generate_tool_call()` failures (SparkUnavailableError, SparkError, ValueError, missing tool_calls) fall back to `_deterministic_parse` (D018 frozen patterns).
+- Runtime computes confirmation requirements — the model never decides `requires_confirmation`.
+- `--verbose` exposes the parsed intent, preserving inspectability (invariant #8).
+
+**Rationale:**
+1. Role-separated messages match the API's native format. No more XML tags or prompt engineering for role boundaries.
+2. Tool calling gives structured output with typed schemas — eliminates JSON parsing fragility and hallucinated field names.
+3. 4 tools (talk, invoke_skill, clarify, meta) cover all intent types cleanly. The model can't invent new intent kinds.
+
+**Implications:**
+- `generate(prompt: str)` no longer exists. All callers pass `messages: list[dict[str, str]]`.
+- `_build_prompt()`, `_parse_json_response()`, `_dict_to_intent()`, `_SYSTEM_PROMPT_HEADER` deleted from parser.
+- Test mocks target `generate_tool_call` (not `generate`) and return `ToolCallResult` objects (not JSON strings).
+- D018's guardrails about JSON schema validation are superseded by tool-call schema validation.

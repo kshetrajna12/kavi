@@ -131,7 +131,8 @@ Local LLM gateway at `http://localhost:8000/v1` (OpenAI-compatible API). Client 
 | Function | Purpose |
 |----------|---------|
 | `is_available()` | Healthcheck via `client.models.list()`. Returns bool. |
-| `generate()` | Chat completion. Truncates prompt to `SPARK_MAX_PROMPT_CHARS`, enforces `SPARK_TIMEOUT`. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
+| `generate()` | Chat completion (D019: takes `messages: list[dict]`). Truncates last user message to `SPARK_MAX_PROMPT_CHARS`, enforces `SPARK_TIMEOUT`. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
+| `generate_tool_call()` | Chat completion expecting a tool call (D019). Returns `ToolCallResult(name, arguments)`. Used by the parser for intent classification via 4 tool schemas. |
 | `embed()` | Batch text embeddings. Returns `list[list[float]]`, sorted by index. Raises `SparkUnavailableError` on connection failure, `SparkError` on empty response. |
 
 Configuration in `kavi.config`:
@@ -177,7 +178,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~8s, 704 tests, no network)
+uv run pytest -q              # Fast suite (~8s, 723 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -523,7 +524,7 @@ AgentResponse     ← intent + plan + records + session + error
 
 ### Parser fallback (frozen — D018)
 
-LLM parsing is the default (D018). When Sparkstation is unavailable or returns unparseable JSON, the parser falls back to deterministic heuristics. These patterns are a frozen stability floor — new skills MUST NOT add new regexes:
+LLM parsing uses tool calling (D019: 4 tool schemas — `talk`, `invoke_skill`, `clarify`, `meta`). When Sparkstation is unavailable or tool call parsing fails, the parser falls back to deterministic heuristics. These patterns are a frozen stability floor — new skills MUST NOT add new regexes:
 - `summarize <path>` → `SkillInvocationIntent(summarize_note)`
 - `summarize that/it/the result` → `SkillInvocationIntent` with `ref:last` (D015)
 - `write <title>\n<body>` → `WriteNoteIntent`
@@ -599,7 +600,7 @@ src/kavi/
 │   ├── db.py           # Schema, migrations (v1→v5)
 │   └── models.py       # Pydantic models + DB operations
 ├── llm/
-│   └── spark.py        # Sparkstation client (generate + embed)
+│   └── spark.py        # Sparkstation client (generate + generate_tool_call + embed)
 ├── ops/
 │   └── doctor.py       # Healthcheck (kavi doctor)
 ├── policies/
