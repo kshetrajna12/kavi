@@ -523,11 +523,15 @@ def chat_cmd(
     confirmed: bool = typer.Option(
         False, "--confirmed", help="Pre-confirm side-effect skills (single-turn)",
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show full internal details (intent, plan, records)",
+    ),
 ) -> None:
     """Chat with Kavi — bounded conversational interface over trusted skills."""
     from pathlib import Path
 
     from kavi.agent.core import handle_message
+    from kavi.agent.presenter import present
     from kavi.config import REGISTRY_PATH
 
     effective_log = None if no_log else (Path(log_path) if log_path else None)
@@ -540,7 +544,7 @@ def chat_cmd(
             log_path=effective_log,
             confirmed=confirmed,
         )
-        rprint(json.dumps(resp.model_dump(), indent=2))
+        rprint(present(resp, verbose=verbose))
         if resp.error:
             raise typer.Exit(1)
         if resp.needs_confirmation:
@@ -548,7 +552,7 @@ def chat_cmd(
         return
 
     # REPL mode
-    _chat_repl(REGISTRY_PATH, effective_log)
+    _chat_repl(REGISTRY_PATH, effective_log, verbose=verbose)
 
 
 def format_search_results(output_json: dict, verbose: bool = False) -> str:
@@ -589,14 +593,21 @@ def format_search_results(output_json: dict, verbose: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
+def _chat_repl(
+    registry_path: Path,
+    log_path: Path | None,
+    *,
+    verbose: bool = False,
+) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
     from kavi.agent.core import confirm_pending, handle_message
     from kavi.agent.models import SessionContext, SkillAction
+    from kavi.agent.presenter import present
 
-    rprint("[bold]Kavi Chat v0[/bold] — type 'help' for commands, 'quit' to exit\n")
+    rprint("[bold]Kavi Chat[/bold] — type 'help' for commands, 'quit' to exit\n")
 
     session = SessionContext()
+    verbose_mode = verbose
 
     while True:
         try:
@@ -611,17 +622,15 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
             rprint("Bye.")
             return
 
-        # Detect "search!" verbosity toggle — strip the "!" for the parser
-        verbose_search = False
-        if line.lower().startswith("search!"):
-            verbose_search = True
-            line = "search" + line[len("search!"):]
-
-        # Track effective message (may be rebuilt with body for writes)
-        effective_msg = line
+        # REPL commands: /verbose toggles verbose mode
+        if line.lower() in ("/verbose", "/explain"):
+            verbose_mode = not verbose_mode
+            state = "on" if verbose_mode else "off"
+            rprint(f"[dim]Verbose mode {state}.[/dim]\n")
+            continue
 
         resp = handle_message(
-            effective_msg,
+            line,
             registry_path=registry_path,
             log_path=log_path,
             parse_mode="deterministic",
@@ -673,13 +682,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
 
         # Handle confirmation flow via PendingConfirmation
         if resp.pending is not None:
-            rprint("\n[yellow]Action requires confirmation:[/yellow]")
-            rprint(f"  Intent: {resp.intent.kind}")
-            if resp.pending.plan is not None:
-                plan_json = json.dumps(
-                    resp.pending.plan.model_dump(), indent=4,
-                )
-                rprint(f"  Plan: {plan_json}")
+            rprint(present(resp, verbose=verbose_mode))
             confirm = input("Execute? [y/N] ").strip().lower()
             if confirm in ("y", "yes"):
                 resp = confirm_pending(
@@ -695,39 +698,7 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
         if resp.session is not None:
             session = resp.session
 
-        # Show parser warnings (trailing intents ignored, etc.)
-        for w in resp.warnings:
-            rprint(f"[yellow]Warning:[/yellow] {w}")
-
-        # Pretty-print results
-        if resp.help_text:
-            rprint(resp.help_text)
-            rprint("")
-            continue
-        if resp.error:
-            rprint(f"[red]Error:[/red] {resp.error}")
-        elif resp.records:
-            for rec in resp.records:
-                if rec.skill_name == "__talk__":
-                    # TalkIntent: show response text directly
-                    text = (rec.output_json or {}).get("response", "")
-                    if text:
-                        rprint(text)
-                    continue
-                status = "[green]OK[/green]" if rec.success else "[red]FAIL[/red]"
-                rprint(f"  {rec.skill_name}: {status}")
-                if rec.output_json:
-                    if rec.skill_name == "search_notes":
-                        rprint(format_search_results(
-                            rec.output_json, verbose=verbose_search,
-                        ))
-                    else:
-                        # Generic compact summary for other skills
-                        for key, val in rec.output_json.items():
-                            if isinstance(val, str) and len(val) > 120:
-                                val = val[:120] + "..."
-                            rprint(f"    {key}: {val}")
-
+        rprint(present(resp, verbose=verbose_mode))
         rprint("")
 
 
