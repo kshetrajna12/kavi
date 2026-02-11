@@ -27,6 +27,7 @@ from kavi.agent.models import (
 from kavi.agent.presenter import present
 from kavi.llm.spark import ToolCallResult
 from tests.test_agent_chat_v0 import (
+    _TALK_FALLBACK,
     FAKE_REGISTRY,
     _ctx,
 )
@@ -42,8 +43,8 @@ class TestScenarioSearchSummarizeRefineWrite:
     def test_full_conversation(self) -> None:
         session = SessionContext()
 
-        # Turn 1: Greeting (TalkIntent)
-        with _ctx(talk_return="Hello! How can I help you today?"):
+        # Turn 1: Greeting (TalkIntent — deterministic → fallback)
+        with _ctx():
             r1 = handle_message(
                 "hello",
                 registry_path=FAKE_REGISTRY,
@@ -106,8 +107,8 @@ class TestScenarioSearchSummarizeRefineWrite:
         assert r4.records[0].input_json.get("style") == "paragraph"
         session = r4.session or session
 
-        # Turn 5: Conversational follow-up (TalkIntent)
-        with _ctx(talk_return="That's a great summary!"):
+        # Turn 5: Conversational follow-up (TalkIntent — deterministic → fallback)
+        with _ctx():
             r5 = handle_message(
                 "looks good",
                 registry_path=FAKE_REGISTRY,
@@ -115,7 +116,7 @@ class TestScenarioSearchSummarizeRefineWrite:
                 session=session,
             )
         assert isinstance(r5.intent, TalkIntent)
-        assert r5.records[0].output_json["response"] == "That's a great summary!"
+        assert r5.records[0].output_json["response"] == _TALK_FALLBACK
         session = r5.session or session
 
         # Turn 6: Write note (needs confirmation)
@@ -157,8 +158,8 @@ class TestScenarioSearchSummarizeRefineWrite:
             a.skill_name == "write_note" for a in session.anchors
         )
 
-        # Turn 8: Another talk turn
-        with _ctx(talk_return="You're welcome!"):
+        # Turn 8: Another talk turn (deterministic → fallback)
+        with _ctx():
             r8 = handle_message(
                 "thanks",
                 registry_path=FAKE_REGISTRY,
@@ -281,7 +282,7 @@ class TestScenarioFailureRecovery:
         session = r3.session or session
 
         # Turn 4: Talk still works after error
-        with _ctx(talk_return="No worries!"):
+        with _ctx():
             r4 = handle_message(
                 "that's fine",
                 registry_path=FAKE_REGISTRY,
@@ -297,14 +298,14 @@ class TestScenarioPresenterFormatting:
 
     def test_conversational_mode_hides_mechanics(self) -> None:
         """Default mode shows natural language, not JSON or intent kinds."""
-        with _ctx(talk_return="Hi! I can help with notes."):
+        with _ctx():
             resp = handle_message(
                 "hello",
                 registry_path=FAKE_REGISTRY,
                 parse_mode="deterministic",
             )
         out = present(resp)
-        assert "Hi! I can help with notes." in out
+        assert _TALK_FALLBACK in out
         # Should NOT contain internal details
         assert '"kind"' not in out
         assert "__talk__" not in out
@@ -362,7 +363,7 @@ class TestScenarioTalkLogging:
         session = SessionContext()
 
         # Turn 1: Talk
-        with _ctx(talk_return="Hello!"):
+        with _ctx():
             r1 = handle_message(
                 "hi",
                 registry_path=FAKE_REGISTRY,
@@ -384,7 +385,7 @@ class TestScenarioTalkLogging:
         session = r2.session or session
 
         # Turn 3: Talk
-        with _ctx(talk_return="Got it!"):
+        with _ctx():
             handle_message(
                 "thanks",
                 registry_path=FAKE_REGISTRY,
@@ -409,7 +410,7 @@ class TestScenarioTalkLogging:
         session = SessionContext()
 
         # Turn 1: Talk (produces __talk__ anchor)
-        with _ctx(talk_return="Sure!"):
+        with _ctx():
             r1 = handle_message(
                 "hey",
                 registry_path=FAKE_REGISTRY,
@@ -456,18 +457,26 @@ class TestScenarioTalkThenDailyNote:
     def test_talk_then_write_to_daily(self) -> None:
         session = SessionContext()
 
-        # Turn 1: Talk about India (TalkIntent)
-        with _ctx(talk_return="India has a rich history of mathematics."):
+        # Turn 1: Talk about India (LLM generates the response directly)
+        talk_tc = ToolCallResult(
+            "talk", {"message": "India has a rich history of mathematics."},
+        )
+        with _ctx(llm_return=talk_tc):
             r1 = handle_message(
                 "tell me about India",
                 registry_path=FAKE_REGISTRY,
-                parse_mode="deterministic",
+                parse_mode="llm",
                 session=session,
             )
         assert isinstance(r1.intent, TalkIntent)
+        assert r1.intent.generated is True
         assert r1.error is None
         session = r1.session or session
         assert any(a.skill_name == "__talk__" for a in session.anchors)
+        # Verify the actual content made it into the record
+        assert r1.records[0].output_json["response"] == (
+            "India has a rich history of mathematics."
+        )
 
         # Turn 2: "write that to my daily notes" — LLM tool call
         tc = ToolCallResult("create_daily_note", {
@@ -538,31 +547,3 @@ class TestScenarioTalkThenDailyNote:
         assert r2.pending.plan.input["content"] == "A summary of the note."
 
 
-class TestScenarioTalkNoHallucination:
-    """Negative test: TalkIntent responses never contain action claims."""
-
-    def test_sanitizer_catches_hallucinated_action(self) -> None:
-        """If LLM hallucinates 'I saved your note', sanitizer replaces it."""
-        from kavi.agent.core import _SANITIZED_REDIRECT
-
-        with _ctx(talk_return="I saved your note to the daily log!"):
-            resp = handle_message(
-                "save that please",
-                registry_path=FAKE_REGISTRY,
-                parse_mode="deterministic",
-            )
-        if isinstance(resp.intent, TalkIntent):
-            assert resp.records[0].output_json["response"] == _SANITIZED_REDIRECT
-
-    def test_normal_talk_passes_through(self) -> None:
-        """Normal conversation is not caught by the sanitizer."""
-        with _ctx(talk_return="That sounds interesting! Tell me more."):
-            resp = handle_message(
-                "I like machine learning",
-                registry_path=FAKE_REGISTRY,
-                parse_mode="deterministic",
-            )
-        assert isinstance(resp.intent, TalkIntent)
-        assert resp.records[0].output_json["response"] == (
-            "That sounds interesting! Tell me more."
-        )

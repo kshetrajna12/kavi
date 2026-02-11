@@ -53,7 +53,7 @@ TOOL_TALK = {
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "The conversational response or acknowledgment.",
+                    "description": "Your complete response to the user.",
                 },
             },
             "required": ["message"],
@@ -210,7 +210,7 @@ def _tool_call_to_intent(
     """Convert a tool call result to an internal intent (D020)."""
     if tool_name == "talk":
         return ParseResult(
-            TalkIntent(message=args.get("message", "")),
+            TalkIntent(message=args.get("message", ""), generated=True),
             [],
             tool_call,
         )
@@ -248,7 +248,7 @@ def _tool_call_to_intent(
 
     # Unknown tool → fallback to talk
     return ParseResult(
-        TalkIntent(message=args.get("message", "")),
+        TalkIntent(message=args.get("message", ""), generated=True),
         [],
         tool_call,
     )

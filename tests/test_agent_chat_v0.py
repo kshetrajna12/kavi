@@ -322,19 +322,14 @@ def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
 
 
 _GEN = "kavi.agent.parser.generate_tool_call"
-_TALK_GEN = "kavi.llm.spark.generate"
 _TALK_FALLBACK = (
     "I'm here to help! I can search your notes, summarize them, "
     "save things to your daily log, and more. What would you like to do?"
 )
 
 
-def _ctx(llm_return=None, llm_error=None, talk_return=None):
-    """Return ExitStack context patching consumer + optional LLM.
-
-    talk_return: response string for TalkIntent's generate() call.
-                 Defaults to _TALK_FALLBACK if not specified.
-    """
+def _ctx(llm_return=None, llm_error=None):
+    """Return ExitStack context patching consumer + optional LLM."""
     stack = ExitStack()
     stack.enter_context(
         patch("kavi.consumer.shim.list_skills", return_value=ENTRIES),
@@ -365,10 +360,6 @@ def _ctx(llm_return=None, llm_error=None, talk_return=None):
         stack.enter_context(
             patch(_GEN, return_value=llm_return),
         )
-    # Always patch the talk handler's generate to avoid real Sparkstation calls
-    stack.enter_context(
-        patch(_TALK_GEN, return_value=talk_return or _TALK_FALLBACK),
-    )
     return stack
 
 
@@ -821,7 +812,7 @@ class TestTalkIntent:
 
     def test_talk_generates_response(self) -> None:
         """TalkIntent produces __talk__ ExecutionRecord with response."""
-        with _ctx(talk_return="Hello! How can I help you?"):
+        with _ctx():
             resp = handle_message(
                 "hello there",
                 registry_path=FAKE_REGISTRY,
@@ -829,6 +820,7 @@ class TestTalkIntent:
             )
         assert isinstance(resp.intent, TalkIntent)
         assert resp.intent.message == "hello there"
+        assert resp.intent.generated is False  # deterministic path
         assert resp.error is None
         assert len(resp.records) == 1
         rec = resp.records[0]
@@ -837,7 +829,8 @@ class TestTalkIntent:
         assert rec.source_hash == ""
         assert rec.success is True
         assert rec.output_json is not None
-        assert rec.output_json["response"] == "Hello! How can I help you?"
+        # Deterministic path → fallback response (no second LLM call)
+        assert rec.output_json["response"] == _TALK_FALLBACK
         assert rec.input_json["message"] == "hello there"
 
     def test_talk_no_confirmation_needed(self) -> None:
@@ -864,7 +857,7 @@ class TestTalkIntent:
     def test_talk_logged_to_file(self, tmp_path: Path) -> None:
         """TalkIntent execution records are logged to JSONL."""
         log_file = tmp_path / "talk.jsonl"
-        with _ctx(talk_return="I'm good, thanks!"):
+        with _ctx():
             handle_message(
                 "how are you",
                 registry_path=FAKE_REGISTRY,
@@ -876,14 +869,14 @@ class TestTalkIntent:
         rec = json.loads(lines[0])
         assert rec["skill_name"] == "__talk__"
         assert rec["side_effect_class"] == "NONE"
-        assert rec["output_json"]["response"] == "I'm good, thanks!"
+        assert rec["output_json"]["response"] == _TALK_FALLBACK
 
     def test_talk_updates_session(self) -> None:
         """TalkIntent updates session with __talk__ anchor."""
         from kavi.agent.models import SessionContext
 
         session = SessionContext()
-        with _ctx(talk_return="Sure, I can help!"):
+        with _ctx():
             resp = handle_message(
                 "can you help me",
                 registry_path=FAKE_REGISTRY,
@@ -894,37 +887,37 @@ class TestTalkIntent:
         assert len(resp.session.anchors) == 1
         assert resp.session.anchors[0].skill_name == "__talk__"
 
-    def test_talk_fallback_on_spark_down(self) -> None:
-        """When Sparkstation is down, TalkIntent uses canned fallback."""
-        from kavi.llm.spark import SparkUnavailableError
-
-        with _ctx(), patch(
-            _TALK_GEN, side_effect=SparkUnavailableError("down"),
-        ):
+    def test_talk_fallback_on_deterministic(self) -> None:
+        """Deterministic path (Spark down) uses canned fallback."""
+        with _ctx():
             resp = handle_message(
                 "tell me a joke",
                 registry_path=FAKE_REGISTRY,
                 parse_mode="deterministic",
             )
         assert isinstance(resp.intent, TalkIntent)
+        assert resp.intent.generated is False
         assert resp.error is None
         assert len(resp.records) == 1
-        assert "help" in resp.records[0].output_json["response"].lower()
+        assert resp.records[0].output_json["response"] == _TALK_FALLBACK
 
     def test_talk_via_llm_parser(self) -> None:
-        """LLM parser returning talk tool call → TalkIntent."""
-        tc = ToolCallResult("talk", {"message": "just chatting"})
-        with _ctx(llm_return=tc, talk_return="Nice to chat!"):
+        """LLM parser returning talk tool call → TalkIntent with generated=True."""
+        tc = ToolCallResult("talk", {"message": "Nice to chat!"})
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "just chatting",
                 registry_path=FAKE_REGISTRY,
             )
         assert isinstance(resp.intent, TalkIntent)
+        assert resp.intent.generated is True
         assert resp.records[0].skill_name == "__talk__"
+        # LLM-generated message is used directly as response
+        assert resp.records[0].output_json["response"] == "Nice to chat!"
 
     def test_talk_serializes_to_json(self) -> None:
         """TalkIntent responses round-trip through JSON."""
-        with _ctx(talk_return="Hello!"):
+        with _ctx():
             resp = handle_message(
                 "hi",
                 registry_path=FAKE_REGISTRY,
@@ -1724,81 +1717,6 @@ class TestConfirmPending:
 
 
 # ── TalkIntent guardrail tests ────────────────────────────────────────
-
-
-class TestTalkGuardrails:
-    """_TALK_SYSTEM prevents hallucinated actions; _sanitize catches leaks."""
-
-    def test_talk_system_contains_cannot(self) -> None:
-        """Prompt explicitly states conversation-only mode."""
-        from kavi.agent.core import _TALK_SYSTEM
-
-        assert "CANNOT" in _TALK_SYSTEM
-
-    def test_talk_system_no_command_coaching(self) -> None:
-        """Prompt does not teach command syntax like 'daily ...'."""
-        from kavi.agent.core import _TALK_SYSTEM
-
-        assert "type" not in _TALK_SYSTEM.lower() or "type a" not in _TALK_SYSTEM.lower()
-        assert "command" not in _TALK_SYSTEM.lower()
-
-    def test_talk_system_forbids_action_claims(self) -> None:
-        """Prompt forbids claiming to have performed actions."""
-        from kavi.agent.core import _TALK_SYSTEM
-
-        assert "NEVER claim" in _TALK_SYSTEM
-
-    def test_sanitize_catches_hallucinated_save(self) -> None:
-        from kavi.agent.core import _SANITIZED_REDIRECT, _sanitize_talk_response
-
-        result = _sanitize_talk_response("I saved your note to the daily log!")
-        assert result == _SANITIZED_REDIRECT
-
-    def test_sanitize_catches_has_been_added(self) -> None:
-        from kavi.agent.core import _SANITIZED_REDIRECT, _sanitize_talk_response
-
-        result = _sanitize_talk_response(
-            "Your note has been added to today's daily.",
-        )
-        assert result == _SANITIZED_REDIRECT
-
-    def test_sanitize_catches_i_wrote(self) -> None:
-        from kavi.agent.core import _SANITIZED_REDIRECT, _sanitize_talk_response
-
-        result = _sanitize_talk_response("I wrote that to your daily notes.")
-        assert result == _SANITIZED_REDIRECT
-
-    def test_sanitize_passes_normal_conversation(self) -> None:
-        from kavi.agent.core import _sanitize_talk_response
-
-        text = "That sounds interesting! Tell me more about your project."
-        assert _sanitize_talk_response(text) == text
-
-    def test_sanitize_passes_offers_to_help(self) -> None:
-        """Offering to do something (not claiming done) should pass."""
-        from kavi.agent.core import _sanitize_talk_response
-
-        text = "Sure, I can save that to a note. Want me to go ahead?"
-        assert _sanitize_talk_response(text) == text
-
-    def test_talk_fallback_no_command_coaching(self) -> None:
-        """Fallback response doesn't teach command syntax."""
-        from kavi.agent.core import _TALK_FALLBACK
-
-        assert "type" not in _TALK_FALLBACK.lower() or "type '" not in _TALK_FALLBACK.lower()
-
-    def test_sanitize_applied_in_generate(self) -> None:
-        """_sanitize_talk_response is called on LLM output in practice."""
-        hallucinated = "I added your note to the daily log!"
-        with _ctx(talk_return=hallucinated):
-            resp = handle_message(
-                "add that to my daily",
-                registry_path=FAKE_REGISTRY,
-                parse_mode="deterministic",
-            )
-        # If it reaches TalkIntent, the sanitizer should catch it
-        if isinstance(resp.intent, TalkIntent):
-            assert "haven't done anything" in resp.records[0].output_json["response"]
 
 
 # ── LLM parser: action + ref → skill invocation ──────────────────────

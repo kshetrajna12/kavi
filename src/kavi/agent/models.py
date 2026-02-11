@@ -237,12 +237,15 @@ class HelpIntent(BaseModel):
 class TalkIntent(BaseModel):
     """Conversational turn — no tool invocation, effect=NONE.
 
-    Default path when no skill is clearly required. Response is
-    generated via Sparkstation and logged as an ExecutionRecord.
+    Default path when no skill is clearly required. When generated=True
+    (LLM path), message IS the response. When generated=False
+    (deterministic fallback), message is raw user input and a canned
+    fallback is used instead.
     """
 
     kind: Literal["talk"] = "talk"
     message: str
+    generated: bool = False
 
 
 class ClarifyIntent(BaseModel):

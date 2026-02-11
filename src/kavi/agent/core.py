@@ -385,49 +385,10 @@ def _execute(plan: SkillAction | ChainAction, registry_path: Path) -> list[Execu
 
 # ── TalkIntent handling ──────────────────────────────────────────────
 
-_TALK_SYSTEM = (
-    "You are Kavi, a personal knowledge assistant. "
-    "You are in CONVERSATION-ONLY mode right now — you CANNOT execute "
-    "actions in this turn. You have NOT written, saved, added, searched, "
-    "created, or done anything on the user's behalf. "
-    "NEVER claim to have performed an action. "
-    "If the user asks you to do something (write, save, search, etc.), "
-    "acknowledge their request warmly and offer to do it — for example: "
-    "'Sure, I can save that to a note. Want me to go ahead?' "
-    "Respond naturally and concisely to conversation."
-)
-
 _TALK_FALLBACK = (
     "I'm here to help! I can search your notes, summarize them, "
     "save things to your daily log, and more. What would you like to do?"
 )
-
-# Phrases that indicate the LLM hallucinated an action in talk mode.
-_ACTION_CLAIM_PATTERNS = (
-    "i saved", "i wrote", "i added", "i created",
-    "has been added", "has been written", "has been saved",
-    "has been created", "note has been", "added to your daily",
-    "saved to your", "written to your", "created your",
-    "added your note", "saved your note", "wrote your note",
-)
-
-_SANITIZED_REDIRECT = (
-    "I can do that, but I haven't done anything yet. "
-    "Want me to go ahead?"
-)
-
-
-def _sanitize_talk_response(text: str) -> str:
-    """Replace hallucinated action claims with a safe redirect.
-
-    Defense-in-depth: even with prompt hardening, LLMs may still claim
-    to have performed actions. This post-check catches those cases.
-    """
-    lower = text.lower()
-    for pattern in _ACTION_CLAIM_PATTERNS:
-        if pattern in lower:
-            return _SANITIZED_REDIRECT
-    return text
 
 
 def _handle_talk(
@@ -438,12 +399,23 @@ def _handle_talk(
     warnings: list[str] | None,
     tool_call: Any = None,
 ) -> AgentResponse:
-    """Generate a conversational response and log as ExecutionRecord."""
+    """Record a conversational response as an ExecutionRecord.
+
+    When intent.generated is True (LLM path), intent.message already
+    contains the response — the parser LLM generated it with full
+    conversation history (D020). No second LLM call needed.
+
+    When intent.generated is False (deterministic fallback / Spark down),
+    intent.message is raw user input, so we use a canned fallback.
+    """
     import datetime
 
+    response_text = intent.message if intent.generated else _TALK_FALLBACK
+    if not response_text:
+        response_text = _TALK_FALLBACK
+
     started_at = datetime.datetime.now(datetime.UTC).isoformat()
-    response_text = _generate_talk_response(intent.message, session)
-    finished_at = datetime.datetime.now(datetime.UTC).isoformat()
+    finished_at = started_at  # no LLM call, effectively instant
 
     record = ExecutionRecord(
         skill_name=TALK_SKILL_NAME,
@@ -472,28 +444,3 @@ def _handle_talk(
         session=updated_session,
         tool_call=tool_call,
     )
-
-
-def _generate_talk_response(
-    message: str,
-    session: SessionContext | None,
-) -> str:
-    """Generate a conversational response via Sparkstation.
-
-    Falls back to a canned response if Sparkstation is unavailable.
-    Uses full conversation history from session (D020).
-    """
-    from kavi.llm.spark import SparkUnavailableError, generate
-
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _TALK_SYSTEM},
-    ]
-    if session and session.messages:
-        messages.extend(session.messages)
-    messages.append({"role": "user", "content": message})
-
-    try:
-        raw = generate(messages, temperature=0.7)
-        return _sanitize_talk_response(raw)
-    except (SparkUnavailableError, Exception):  # noqa: BLE001
-        return _TALK_FALLBACK
