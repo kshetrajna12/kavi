@@ -444,3 +444,131 @@ class TestScenarioTalkLogging:
         assert isinstance(r3.intent, SkillInvocationIntent)
         assert r3.records[0].skill_name == "summarize_note"
         assert r3.records[0].success
+
+
+class TestScenarioTalkThenDailyNote:
+    """Multi-turn: talk about a topic → 'write that to daily' → confirm → done.
+
+    Exercises TalkIntent → content ref resolution → FILE_WRITE confirmation
+    → execution via confirm_pending. Generic mechanism — daily note is just
+    the first case; the ref:last content resolution works for any skill.
+    """
+
+    def test_talk_then_write_to_daily(self) -> None:
+        session = SessionContext()
+
+        # Turn 1: Talk about India (TalkIntent)
+        with _ctx(talk_return="India has a rich history of mathematics."):
+            r1 = handle_message(
+                "tell me about India",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert isinstance(r1.intent, TalkIntent)
+        assert r1.error is None
+        session = r1.session or session
+        assert any(a.skill_name == "__talk__" for a in session.anchors)
+
+        # Turn 2: "write that to my daily notes" — LLM escalation
+        # Mock the LLM to return create_daily_note with ref:last
+        llm_resp = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "create_daily_note",
+            "input": {"content": "ref:last"},
+        })
+        with _ctx(llm_return=llm_resp):
+            r2 = handle_message(
+                "write that to my daily notes",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="llm",
+                session=session,
+            )
+        # Should be create_daily_note, needs confirmation (FILE_WRITE)
+        assert isinstance(r2.intent, SkillInvocationIntent)
+        assert r2.intent.skill_name == "create_daily_note"
+        assert r2.needs_confirmation is True
+        assert r2.pending is not None
+        # Ref should be resolved to the talk response text
+        assert r2.pending.plan.input["content"] == (
+            "India has a rich history of mathematics."
+        )
+
+        # Turn 3: Confirm → executes create_daily_note
+        with _ctx():
+            r3 = confirm_pending(
+                r2.pending,
+                registry_path=FAKE_REGISTRY,
+            )
+        assert r3.error is None
+        assert len(r3.records) == 1
+        assert r3.records[0].skill_name == "create_daily_note"
+        assert r3.records[0].success
+        assert r3.records[0].side_effect_class == "FILE_WRITE"
+        # Verify the content made it through
+        assert r3.records[0].input_json["content"] == (
+            "India has a rich history of mathematics."
+        )
+
+    def test_summarize_then_write_to_daily(self) -> None:
+        """Generic: summarize → 'add that to daily' → content = summary."""
+        session = SessionContext()
+
+        # Turn 1: Summarize a note
+        with _ctx():
+            r1 = handle_message(
+                "summarize notes/ml.md",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert r1.error is None
+        session = r1.session or session
+
+        # Turn 2: "add that to daily" via LLM
+        llm_resp = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "create_daily_note",
+            "input": {"content": "ref:last"},
+        })
+        with _ctx(llm_return=llm_resp):
+            r2 = handle_message(
+                "add that to my daily",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="llm",
+                session=session,
+            )
+        assert r2.needs_confirmation is True
+        assert r2.pending is not None
+        # Last anchor is summarize_note — content should be the summary
+        assert r2.pending.plan.input["content"] == "A summary of the note."
+
+
+class TestScenarioTalkNoHallucination:
+    """Negative test: TalkIntent responses never contain action claims."""
+
+    def test_sanitizer_catches_hallucinated_action(self) -> None:
+        """If LLM hallucinates 'I saved your note', sanitizer replaces it."""
+        from kavi.agent.core import _SANITIZED_REDIRECT
+
+        with _ctx(talk_return="I saved your note to the daily log!"):
+            resp = handle_message(
+                "save that please",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        if isinstance(resp.intent, TalkIntent):
+            assert resp.records[0].output_json["response"] == _SANITIZED_REDIRECT
+
+    def test_normal_talk_passes_through(self) -> None:
+        """Normal conversation is not caught by the sanitizer."""
+        with _ctx(talk_return="That sounds interesting! Tell me more."):
+            resp = handle_message(
+                "I like machine learning",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, TalkIntent)
+        assert resp.records[0].output_json["response"] == (
+            "That sounds interesting! Tell me more."
+        )

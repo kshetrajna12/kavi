@@ -91,6 +91,18 @@ input field. For example: "summarize that" becomes \
 {"kind": "skill_invocation", "skill_name": "summarize_note", \
 "input": {"path": "ref:last"}}. Use "ref:last_<skill>" to reference the \
 most recent result of a specific skill (e.g. "ref:last_search").
+- ACTION REQUESTS WITH REFERENCES: When the user asks to perform an \
+action on a prior result (e.g. "write that to a note", "save that to \
+my daily", "add it to daily notes"), this is a skill_invocation — NOT \
+talk. Use "ref:last" for the field that needs the prior result. \
+Example: "add that to my daily notes" → \
+{"kind": "skill_invocation", "skill_name": "create_daily_note", \
+"input": {"content": "ref:last"}}. \
+Example: "write that to a note" → \
+{"kind": "write_note", "title": "ref:last", "body": "ref:last"}. \
+Any request mentioning "daily notes" or "daily" as a target should \
+route to create_daily_note. Any request to write/save/add a prior \
+result is a skill invocation, never talk.
 """
 
 ParseMode = Literal["llm", "deterministic"]
@@ -230,7 +242,37 @@ def _deterministic_parse(
             skill_name=skill_match.name, input=inp,
         )
 
+    # Escalation: if deterministic can't match but the message looks
+    # like an action request with a ref pronoun, try LLM for a second
+    # opinion before falling through to TalkIntent.
+    if _looks_like_action_ref(lower) and skills:
+        llm_result = _llm_parse(msg, skills)
+        if not isinstance(llm_result.intent, TalkIntent):
+            return llm_result.intent
+
     return TalkIntent(message=msg)
+
+
+# ── Escalation heuristic ──────────────────────────────────────────────
+
+_ACTION_VERBS = {"write", "add", "put", "save", "create", "append"}
+_REF_WORDS = {"that", "it", "this"}
+_REF_PHRASES = {"the result"}
+
+
+def _looks_like_action_ref(lower: str) -> bool:
+    """Return True if message has an action verb AND a ref pronoun.
+
+    Used to escalate from deterministic to LLM parse when the message
+    looks like an action request on a prior result but doesn't match
+    any deterministic pattern.
+    """
+    words = lower.split()
+    has_verb = any(v in words for v in _ACTION_VERBS)
+    has_ref = any(r in words for r in _REF_WORDS) or any(
+        p in lower for p in _REF_PHRASES
+    )
+    return has_verb and has_ref
 
 
 # ── Reference detection (D015) ────────────────────────────────────────

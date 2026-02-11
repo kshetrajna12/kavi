@@ -352,17 +352,47 @@ def _execute(plan: SkillAction | ChainAction, registry_path: Path) -> list[Execu
 
 _TALK_SYSTEM = (
     "You are Kavi, a personal knowledge assistant. "
-    "You help users manage their notes, search for information, "
-    "and organize their knowledge. "
-    "Respond naturally and concisely. "
-    "If the user asks what you can do, mention you can search notes, "
-    "summarize them, write new notes, and fetch data from the web."
+    "You are in CONVERSATION-ONLY mode right now — you CANNOT execute "
+    "actions in this turn. You have NOT written, saved, added, searched, "
+    "created, or done anything on the user's behalf. "
+    "NEVER claim to have performed an action. "
+    "If the user asks you to do something (write, save, search, etc.), "
+    "acknowledge their request warmly and offer to do it — for example: "
+    "'Sure, I can save that to a note. Want me to go ahead?' "
+    "Respond naturally and concisely to conversation."
 )
 
 _TALK_FALLBACK = (
-    "I can help you search notes, summarize them, write new notes, "
-    "and more. Type 'help' to see available commands."
+    "I'm here to help! I can search your notes, summarize them, "
+    "save things to your daily log, and more. What would you like to do?"
 )
+
+# Phrases that indicate the LLM hallucinated an action in talk mode.
+_ACTION_CLAIM_PATTERNS = (
+    "i saved", "i wrote", "i added", "i created",
+    "has been added", "has been written", "has been saved",
+    "has been created", "note has been", "added to your daily",
+    "saved to your", "written to your", "created your",
+    "added your note", "saved your note", "wrote your note",
+)
+
+_SANITIZED_REDIRECT = (
+    "I can do that, but I haven't done anything yet. "
+    "Want me to go ahead?"
+)
+
+
+def _sanitize_talk_response(text: str) -> str:
+    """Replace hallucinated action claims with a safe redirect.
+
+    Defense-in-depth: even with prompt hardening, LLMs may still claim
+    to have performed actions. This post-check catches those cases.
+    """
+    lower = text.lower()
+    for pattern in _ACTION_CLAIM_PATTERNS:
+        if pattern in lower:
+            return _SANITIZED_REDIRECT
+    return text
 
 
 def _handle_talk(
@@ -437,6 +467,7 @@ def _generate_talk_response(
     prompt = "\n\n".join(prompt_parts)
 
     try:
-        return generate(prompt, temperature=0.7)
+        raw = generate(prompt, temperature=0.7)
+        return _sanitize_talk_response(raw)
     except (SparkUnavailableError, Exception):  # noqa: BLE001
         return _TALK_FALLBACK

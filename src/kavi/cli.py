@@ -526,8 +526,14 @@ def chat_cmd(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show full internal details (intent, plan, records)",
     ),
+    parse_mode: str = typer.Option(
+        None, "--parse-mode",
+        help="Parser mode: 'llm' (default) or 'deterministic'. "
+        "Env: KAVI_PARSE_MODE.",
+    ),
 ) -> None:
     """Chat with Kavi — bounded conversational interface over trusted skills."""
+    import os
     from pathlib import Path
 
     from kavi.agent.core import handle_message
@@ -535,6 +541,7 @@ def chat_cmd(
     from kavi.config import REGISTRY_PATH
 
     effective_log = None if no_log else (Path(log_path) if log_path else None)
+    effective_mode = parse_mode or os.environ.get("KAVI_PARSE_MODE", "llm")
 
     if message is not None:
         # Single-turn mode
@@ -543,6 +550,7 @@ def chat_cmd(
             registry_path=REGISTRY_PATH,
             log_path=effective_log,
             confirmed=confirmed,
+            parse_mode=effective_mode,  # type: ignore[arg-type]
         )
         rprint(present(resp, verbose=verbose))
         if resp.error:
@@ -552,7 +560,10 @@ def chat_cmd(
         return
 
     # REPL mode
-    _chat_repl(REGISTRY_PATH, effective_log, verbose=verbose)
+    _chat_repl(
+        REGISTRY_PATH, effective_log,
+        verbose=verbose, parse_mode=effective_mode,  # type: ignore[arg-type]
+    )
 
 
 def format_search_results(output_json: dict, verbose: bool = False) -> str:
@@ -598,8 +609,11 @@ def _chat_repl(
     log_path: Path | None,
     *,
     verbose: bool = False,
+    parse_mode: str = "llm",
 ) -> None:
     """Interactive read-eval-print loop for Kavi Chat."""
+    from typing import Literal
+
     from kavi.agent.core import confirm_pending, handle_message
     from kavi.agent.models import SessionContext, SkillAction
     from kavi.agent.presenter import present
@@ -608,6 +622,10 @@ def _chat_repl(
 
     session = SessionContext()
     verbose_mode = verbose
+    effective_mode: Literal["llm", "deterministic"] = (
+        "deterministic" if parse_mode == "deterministic" else "llm"
+    )
+    _spark_warned = False
 
     while True:
         try:
@@ -633,9 +651,24 @@ def _chat_repl(
             line,
             registry_path=registry_path,
             log_path=log_path,
-            parse_mode="deterministic",
+            parse_mode=effective_mode,
             session=session,
         )
+
+        # Warn once per session on Sparkstation fallback
+        if (
+            not _spark_warned
+            and effective_mode == "llm"
+            and resp.warnings
+        ):
+            for w in resp.warnings:
+                if "spark" in w.lower() or "fallback" in w.lower():
+                    rprint(
+                        "[dim]Note: Sparkstation unavailable, "
+                        "using deterministic parser.[/dim]",
+                    )
+                    _spark_warned = True
+                    break
 
         # If write_note with empty body, prompt for body then update
         # the stashed pending confirmation (no re-parse)

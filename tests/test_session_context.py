@@ -1078,3 +1078,127 @@ class TestHandleMessageWithSession:
         assert resp.error is None
         assert len(resp.records) == 2
         assert resp.session is None
+
+
+# ── Generic content ref resolution ────────────────────────────────────
+
+
+class TestContentRefResolution:
+    """resolve_refs uses content extraction for content-like fields."""
+
+    def test_content_ref_from_talk_anchor(self) -> None:
+        """ref:last in a content field resolves to __talk__ response text."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "__talk__", "aaa",
+                {"response": "India has a rich history of mathematics."},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="create_daily_note",
+            input={"content": "ref:last"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["content"] == "India has a rich history of mathematics."
+
+    def test_content_ref_from_summarize_anchor(self) -> None:
+        """ref:last in a content field resolves to summary text."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "bbb",
+                {"path": "notes/ml.md", "summary": "ML is fascinating."},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="create_daily_note",
+            input={"content": "ref:last"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["content"] == "ML is fascinating."
+
+    def test_content_ref_from_search_anchor(self) -> None:
+        """ref:last in content field from search → uses query."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "search_notes", "ccc",
+                {"query": "machine learning", "top_result_path": "notes/ml.md"},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="create_daily_note",
+            input={"content": "ref:last"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        # Content extraction prefers response > summary > content > query
+        assert result.input["content"] == "machine learning"
+
+    def test_path_ref_still_uses_path_extraction(self) -> None:
+        """ref:last in a path field still uses path-oriented extraction."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "search_notes", "aaa",
+                {"query": "ml", "top_result_path": "notes/ml.md"},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="summarize_note",
+            input={"path": "ref:last"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        # Path extraction prefers top_result_path
+        assert result.input["path"] == "notes/ml.md"
+
+    def test_content_ref_no_anchors_returns_ambiguity(self) -> None:
+        """ref:last in content field with empty session → AmbiguityResponse."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        intent = SkillInvocationIntent(
+            skill_name="create_daily_note",
+            input={"content": "ref:last"},
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, AmbiguityResponse)
+        assert "no prior results" in result.message.lower()
+
+    def test_body_field_uses_content_extraction(self) -> None:
+        """'body' is also a content-like field — uses content extraction."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "__talk__", "aaa",
+                {"response": "A conversation about Python."},
+            ),
+        ]
+        intent = SkillInvocationIntent(
+            skill_name="write_note",
+            input={
+                "path": "Inbox/AI/test.md",
+                "title": "Test",
+                "body": "ref:last",
+            },
+        )
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, SkillInvocationIntent)
+        assert result.input["body"] == "A conversation about Python."
+        # path and title kept as-is
+        assert result.input["path"] == "Inbox/AI/test.md"
+        assert result.input["title"] == "Test"

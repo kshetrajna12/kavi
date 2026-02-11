@@ -88,6 +88,16 @@ class HttpGetOutput(SkillOutput):
     error: str | None = None
 
 
+class DailyNoteInput(SkillInput):
+    content: str
+
+
+class DailyNoteOutput(SkillOutput):
+    path: str
+    date: str
+    sha256: str
+
+
 class WriteInput(SkillInput):
     path: str
     title: str
@@ -97,6 +107,22 @@ class WriteInput(SkillInput):
 class WriteOutput(SkillOutput):
     written_path: str
     title: str
+
+
+class DailyNoteSkill(BaseSkill):
+    name = "create_daily_note"
+    description = "Create or append to today's daily note"
+    input_model = DailyNoteInput
+    output_model = DailyNoteOutput
+    side_effect_class = "FILE_WRITE"
+
+    def execute(self, input_data: BaseModel) -> BaseModel:
+        assert isinstance(input_data, DailyNoteInput)
+        return DailyNoteOutput(
+            path="vault_out/daily/2026-02-10.md",
+            date="2026-02-10",
+            sha256="abc123",
+        )
 
 
 class ReadByTagSkill(BaseSkill):
@@ -225,6 +251,14 @@ ENTRIES = [
         "hash": "eee",
         "module_path": "fake.HttpGetSkill",
     },
+    {
+        "name": "create_daily_note",
+        "description": "Create or append to today's daily note",
+        "side_effect_class": "FILE_WRITE",
+        "version": "1.0.0",
+        "hash": "fff",
+        "module_path": "fake.DailyNoteSkill",
+    },
 ]
 
 
@@ -261,6 +295,10 @@ SKILL_INFOS = [
         "http_get_json", "Fetch JSON from URL", "NETWORK",
         "eee", HttpGetInput, HttpGetOutput,
     ),
+    _make_info(
+        "create_daily_note", "Create or append to today's daily note",
+        "FILE_WRITE", "fff", DailyNoteInput, DailyNoteOutput,
+    ),
 ]
 
 FAKE_REGISTRY = Path("/fake/registry.yaml")
@@ -276,6 +314,7 @@ def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
         "write_note": WriteSkill,
         "read_notes_by_tag": ReadByTagSkill,
         "http_get_json": HttpGetSkill,
+        "create_daily_note": DailyNoteSkill,
     }
     if name in skills:
         return skills[name]()
@@ -285,8 +324,8 @@ def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
 _GEN = "kavi.agent.parser.generate"
 _TALK_GEN = "kavi.llm.spark.generate"
 _TALK_FALLBACK = (
-    "I can help you search notes, summarize them, write new notes, "
-    "and more. Type 'help' to see available commands."
+    "I'm here to help! I can search your notes, summarize them, "
+    "save things to your daily log, and more. What would you like to do?"
 )
 
 
@@ -1768,3 +1807,171 @@ class TestConfirmPending:
         # Verify the input matches what was stashed
         assert resp2.records[0].input_json["title"] == "Test"
         assert resp2.records[0].input_json["body"] == "hello world"
+
+
+# ── TalkIntent guardrail tests ────────────────────────────────────────
+
+
+class TestTalkGuardrails:
+    """_TALK_SYSTEM prevents hallucinated actions; _sanitize catches leaks."""
+
+    def test_talk_system_contains_cannot(self) -> None:
+        """Prompt explicitly states conversation-only mode."""
+        from kavi.agent.core import _TALK_SYSTEM
+
+        assert "CANNOT" in _TALK_SYSTEM
+
+    def test_talk_system_no_command_coaching(self) -> None:
+        """Prompt does not teach command syntax like 'daily ...'."""
+        from kavi.agent.core import _TALK_SYSTEM
+
+        assert "type" not in _TALK_SYSTEM.lower() or "type a" not in _TALK_SYSTEM.lower()
+        assert "command" not in _TALK_SYSTEM.lower()
+
+    def test_talk_system_forbids_action_claims(self) -> None:
+        """Prompt forbids claiming to have performed actions."""
+        from kavi.agent.core import _TALK_SYSTEM
+
+        assert "NEVER claim" in _TALK_SYSTEM
+
+    def test_sanitize_catches_hallucinated_save(self) -> None:
+        from kavi.agent.core import _SANITIZED_REDIRECT, _sanitize_talk_response
+
+        result = _sanitize_talk_response("I saved your note to the daily log!")
+        assert result == _SANITIZED_REDIRECT
+
+    def test_sanitize_catches_has_been_added(self) -> None:
+        from kavi.agent.core import _SANITIZED_REDIRECT, _sanitize_talk_response
+
+        result = _sanitize_talk_response(
+            "Your note has been added to today's daily.",
+        )
+        assert result == _SANITIZED_REDIRECT
+
+    def test_sanitize_catches_i_wrote(self) -> None:
+        from kavi.agent.core import _SANITIZED_REDIRECT, _sanitize_talk_response
+
+        result = _sanitize_talk_response("I wrote that to your daily notes.")
+        assert result == _SANITIZED_REDIRECT
+
+    def test_sanitize_passes_normal_conversation(self) -> None:
+        from kavi.agent.core import _sanitize_talk_response
+
+        text = "That sounds interesting! Tell me more about your project."
+        assert _sanitize_talk_response(text) == text
+
+    def test_sanitize_passes_offers_to_help(self) -> None:
+        """Offering to do something (not claiming done) should pass."""
+        from kavi.agent.core import _sanitize_talk_response
+
+        text = "Sure, I can save that to a note. Want me to go ahead?"
+        assert _sanitize_talk_response(text) == text
+
+    def test_talk_fallback_no_command_coaching(self) -> None:
+        """Fallback response doesn't teach command syntax."""
+        from kavi.agent.core import _TALK_FALLBACK
+
+        assert "type" not in _TALK_FALLBACK.lower() or "type '" not in _TALK_FALLBACK.lower()
+
+    def test_sanitize_applied_in_generate(self) -> None:
+        """_sanitize_talk_response is called on LLM output in practice."""
+        hallucinated = "I added your note to the daily log!"
+        with _ctx(talk_return=hallucinated):
+            resp = handle_message(
+                "add that to my daily",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        # If it reaches TalkIntent, the sanitizer should catch it
+        if isinstance(resp.intent, TalkIntent):
+            assert "haven't done anything" in resp.records[0].output_json["response"]
+
+
+# ── LLM parser: action + ref → skill invocation ──────────────────────
+
+
+class TestParserActionRef:
+    """LLM parser routes action+ref to skill_invocation, not talk."""
+
+    def test_llm_routes_daily_ref(self) -> None:
+        """'write that to my daily notes' → create_daily_note with ref:last."""
+        resp = {
+            "kind": "skill_invocation",
+            "skill_name": "create_daily_note",
+            "input": {"content": "ref:last"},
+        }
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, _ = parse_intent(
+                "write that to my daily notes", SKILL_INFOS,
+            )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "create_daily_note"
+        assert intent.input["content"] == "ref:last"
+
+    def test_llm_routes_generic_write_ref(self) -> None:
+        """'save that to a note' → write_note with ref:last."""
+        resp = {
+            "kind": "write_note",
+            "title": "ref:last",
+            "body": "ref:last",
+        }
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, _ = parse_intent(
+                "save that to a note", SKILL_INFOS,
+            )
+        assert isinstance(intent, WriteNoteIntent)
+
+
+class TestDeterministicEscalation:
+    """Deterministic parser escalates action+ref to LLM."""
+
+    def test_escalation_fires_for_action_ref(self) -> None:
+        """'add that to my daily' triggers LLM escalation."""
+        from kavi.agent.parser import _looks_like_action_ref
+
+        assert _looks_like_action_ref("add that to my daily notes")
+
+    def test_no_escalation_for_plain_text(self) -> None:
+        from kavi.agent.parser import _looks_like_action_ref
+
+        assert not _looks_like_action_ref("hello there")
+
+    def test_no_escalation_for_verb_without_ref(self) -> None:
+        from kavi.agent.parser import _looks_like_action_ref
+
+        assert not _looks_like_action_ref("write a new note about python")
+
+    def test_no_escalation_for_ref_without_verb(self) -> None:
+        from kavi.agent.parser import _looks_like_action_ref
+
+        assert not _looks_like_action_ref("what about that")
+
+    def test_escalation_routes_to_skill(self) -> None:
+        """Deterministic fallback: action+ref escalates to LLM → skill."""
+        llm_resp = json.dumps({
+            "kind": "skill_invocation",
+            "skill_name": "create_daily_note",
+            "input": {"content": "ref:last"},
+        })
+        with patch(_GEN, return_value=llm_resp):
+            intent, _ = parse_intent(
+                "can you write that to my daily notes",
+                SKILL_INFOS,
+                mode="deterministic",
+            )
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "create_daily_note"
+
+    def test_escalation_falls_to_talk_if_llm_says_talk(self) -> None:
+        """If LLM also returns talk, fall through to TalkIntent."""
+        llm_resp = json.dumps({
+            "kind": "talk",
+            "message": "just chatting",
+        })
+        with patch(_GEN, return_value=llm_resp):
+            intent, _ = parse_intent(
+                "save that somewhere",
+                SKILL_INFOS,
+                mode="deterministic",
+            )
+        assert isinstance(intent, TalkIntent)

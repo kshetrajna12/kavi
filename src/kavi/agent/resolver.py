@@ -41,6 +41,27 @@ def _anchor_value(anchor: Anchor) -> str | None:
 # For search refs, prefer query/summary over path fields.
 _SEARCH_VALUE_FIELDS = ("query", "summary")
 
+# For content refs (body, content, text, message), prefer textual output.
+_CONTENT_FIELDS = frozenset({"content", "body", "text", "message"})
+_CONTENT_VALUE_FIELDS = ("response", "summary", "content", "query")
+
+
+def _content_anchor_value(anchor: Anchor) -> str | None:
+    """Extract the most useful textual content from an anchor's data.
+
+    Used when a ref:last binds to a content-like field (body, content, etc.).
+    Prefers response text > summary > content > query > first string.
+    """
+    for field in _CONTENT_VALUE_FIELDS:
+        val = anchor.data.get(field)
+        if val is not None:
+            return str(val)
+    # Fallback: first string value that isn't a path
+    for v in anchor.data.values():
+        if isinstance(v, str) and not v.endswith(".md"):
+            return v
+    return _anchor_value(anchor)
+
 
 def _search_anchor_value(anchor: Anchor) -> str | None:
     """Extract a search-friendly value from an anchor's data."""
@@ -254,7 +275,10 @@ def resolve_refs(
                     f"to reference. Try running a command first.",
                 )
 
-            concrete = _anchor_value(anchor)
+            if key in _CONTENT_FIELDS:
+                concrete = _content_anchor_value(anchor)
+            else:
+                concrete = _anchor_value(anchor)
             if concrete is not None:
                 resolved_input[key] = concrete
             else:
