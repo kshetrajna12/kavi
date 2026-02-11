@@ -177,7 +177,7 @@ No custom paths supported. Single source of naming truth across build packets, d
 ## Testing
 
 ```bash
-uv run pytest -q              # Fast suite (~3s, 619 tests, no network)
+uv run pytest -q              # Fast suite (~8s, 704 tests, no network)
 uv run pytest -m slow         # Integration tests (real subprocesses)
 uv run pytest -m spark        # Live Sparkstation tests (requires gateway)
 uv run ruff check src/ tests/ # Lint
@@ -484,7 +484,7 @@ The agent layer (`kavi.agent`) is a bounded conversational interface over truste
 | Refine/correct | `transform` | Re-invoke target skill with field overrides (resolver → `skill_invocation`) |
 | Help / skills listing | `help` | Returns formatted skills index (no execution) |
 
-Anything else returns `kind="unsupported"` with a help message listing available commands and skills.
+Anything else returns `kind="talk"` and generates a conversational response via Sparkstation (D017). `kind="unsupported"` is reserved for harmful/impossible requests (LLM only).
 
 ### Architecture
 
@@ -493,7 +493,7 @@ User message
     ↓
 parse_intent()    ← Sparkstation (one call) OR deterministic fallback
     ↓                (detects ref patterns: "that"/"it"/"again" → ref:last)
-ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | help | unsupported
+ParsedIntent      ← discriminated union: search_and_summarize | write_note | skill_invocation | transform | help | talk | unsupported
     ↓
 resolve_refs()    ← binds ref:last / ref:last_<skill> to anchor values (D015)
     ↓
@@ -521,9 +521,9 @@ AgentResponse     ← intent + plan + records + session + error
   - Single-turn mode (`kavi chat -m "..."`): returns `needs_confirmation=true` without executing. Pass `--confirmed` to pre-confirm.
   - REPL mode: prompts the user and proceeds only on "yes". On confirmation, executes the **stashed plan** via `execute_plan()` — no re-parsing, no session drift.
 
-### Parser fallback
+### Parser fallback (frozen — D018)
 
-When Sparkstation is unavailable or returns unparseable JSON, the parser falls back to deterministic heuristics:
+LLM parsing is the default (D018). When Sparkstation is unavailable or returns unparseable JSON, the parser falls back to deterministic heuristics. These patterns are a frozen stability floor — new skills MUST NOT add new regexes:
 - `summarize <path>` → `SkillInvocationIntent(summarize_note)`
 - `summarize that/it/the result` → `SkillInvocationIntent` with `ref:last` (D015)
 - `write <title>\n<body>` → `WriteNoteIntent`
@@ -536,7 +536,7 @@ When Sparkstation is unavailable or returns unparseable JSON, the parser falls b
 - `search/find again` → `SearchAndSummarizeIntent` with `ref:last_search` (D015)
 - `search/find <query>` → `SearchAndSummarizeIntent`
 - `<skill_name> <json>` → `SkillInvocationIntent` (generic, for any registered skill)
-- Anything else → `UnsupportedIntent`
+- Anything else → `TalkIntent`
 
 ### CLI
 
@@ -619,5 +619,5 @@ tests/
 └── ...                    # See test markers above
 docs/
 ├── ARCHITECTURE.md     # This file
-└── decisions.md        # Append-only decision log (D001–D016)
+└── decisions.md        # Append-only decision log (D001–D018)
 ```

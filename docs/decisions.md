@@ -374,3 +374,46 @@ The skill + test files remain **required** (gate fails if missing). The runtime 
 - New pseudo-skill `__talk__` appears in execution logs and session anchors.
 - REPL version string changes from "Kavi Chat v0" to "Kavi Chat".
 - `kavi chat --verbose` and REPL `/verbose` command for full detail mode.
+
+---
+
+## D018: LLM-first parsing — deterministic patterns are frozen fallback floor (2026-02-10)
+
+**Status:** `CURRENT`
+
+**Context:** The chat surface parser (`kavi.agent.parser`) had two modes: `"deterministic"` (regex-based routing with 10+ compiled patterns) and `"llm"` (Sparkstation-first with deterministic fallback). REPL originally defaulted to `"deterministic"` to avoid misclassification, but this caused:
+
+1. Natural language action requests (e.g. "write that to my daily notes") falling through to TalkIntent because no regex matched.
+2. TalkIntent then generating conversational responses that hallucinated action completion.
+3. Growing pressure to add per-skill phrase patterns — each new skill required new regexes.
+
+The `_looks_like_action_ref` escalation heuristic was added as a band-aid: when deterministic mode couldn't match but the message contained an action verb + ref pronoun, it silently called `_llm_parse`. This made "deterministic" mode non-deterministic — an implicit contract violation.
+
+**Decision:** LLM parsing is the default for all interactive modes (REPL and single-turn `kavi chat -m`). Deterministic patterns are frozen as a fallback floor for Sparkstation-unavailable degraded mode. Specifically:
+
+1. **`parse_mode="llm"` is the default.** The LLM sees every user turn first and produces a structured intent (one of 7 types). `_dict_to_intent()` validates the schema. Downstream pipeline (resolver → planner → policy gate → execution) remains fully deterministic.
+
+2. **Deterministic patterns are frozen.** The existing regex patterns in `_detect_ref_pattern` and `_deterministic_parse` cover the 6 current skills' most common invocation forms. They are a stability floor, not a growth target. **New skills MUST NOT add new regex patterns.** The LLM prompt auto-discovers skills from the registry via `_build_skill_section`.
+
+3. **`_looks_like_action_ref` escalation is removed.** It existed to compensate for deterministic-first routing and made "deterministic" mode non-deterministic. With LLM-first as default, the escalation was unnecessary. Removed along with `_ACTION_VERBS`, `_REF_WORDS`, and `_REF_PHRASES`.
+
+4. **Meta-commands stay deterministic.** `help`, `quit`, `/verbose`, `/explain`, and REPL control flow are handled by deterministic matching before the LLM is consulted. These are not skill routing — they are session control.
+
+5. **LLM proposes, runtime decides.** The LLM output is a JSON intent object validated by Pydantic models. It never reaches `exec()`, `eval()`, or direct tool invocation. The governance pipeline (resolve_refs → intent_to_plan → policy gate → confirmation gate → consume_skill → trust-verified load) is unchanged.
+
+**Guardrails:**
+- LLM output is constrained to 7 intent types (`search_and_summarize`, `write_note`, `skill_invocation`, `transform`, `help`, `talk`, `unsupported`). Unknown `kind` values produce `UnsupportedIntent`.
+- `_llm_parse` must catch `pydantic.ValidationError` alongside `json.JSONDecodeError`/`KeyError`/`TypeError`/`ValueError` to ensure malformed LLM output falls back to deterministic parsing instead of propagating.
+- `--verbose` exposes the parsed intent, enabling inspection of LLM classification decisions (invariant #8).
+- Sparkstation unavailability triggers graceful fallback to `_deterministic_parse` — the frozen patterns ensure basic functionality without network.
+
+**Rationale:**
+1. The LLM handles natural language variation that regexes cannot (e.g. "save that to my daily notes", "add it to today's log", "write the result down"). One prompt covers all skills; no per-skill regex maintenance.
+2. Deterministic downstream preserves governance guarantees. The parse step is the only non-deterministic component, and it is bounded (finite schema) and inspectable (verbose mode).
+3. Freezing patterns prevents the combinatorial growth that was degrading maintainability and test clarity.
+
+**Implications:**
+- `ParseMode` type remains `Literal["llm", "deterministic"]` but "deterministic" is now documented as degraded/fallback mode, not the recommended default.
+- The `_looks_like_action_ref` function, `_ACTION_VERBS`, `_REF_WORDS`, and `_REF_PHRASES` have been removed.
+- Test suites that pass `parse_mode="deterministic"` are testing the fallback path, not the primary path.
+- Future mode rename (e.g. "local" vs "llm") is an option but not required by this decision.

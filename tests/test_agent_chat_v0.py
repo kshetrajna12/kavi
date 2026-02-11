@@ -580,6 +580,19 @@ class TestParserDeterministic:
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "summarize_note"
 
+    def test_llm_validation_error_triggers_fallback(self) -> None:
+        """LLM returns valid JSON but fields fail Pydantic validation."""
+        # SearchAndSummarizeIntent requires 'query' — omit it to trigger
+        # ValidationError in _dict_to_intent.
+        bad_resp = {"kind": "search_and_summarize"}
+        with patch(_GEN, return_value=json.dumps(bad_resp)):
+            intent, _ = parse_intent(
+                "summarize notes/ml.md", SKILL_INFOS,
+            )
+        # Falls back to deterministic → matches "summarize <path>"
+        assert isinstance(intent, SkillInvocationIntent)
+        assert intent.skill_name == "summarize_note"
+
 
 class TestParserSkillInvocation:
     """Tests for the generic SkillInvocationIntent path."""
@@ -1922,56 +1935,3 @@ class TestParserActionRef:
         assert isinstance(intent, WriteNoteIntent)
 
 
-class TestDeterministicEscalation:
-    """Deterministic parser escalates action+ref to LLM."""
-
-    def test_escalation_fires_for_action_ref(self) -> None:
-        """'add that to my daily' triggers LLM escalation."""
-        from kavi.agent.parser import _looks_like_action_ref
-
-        assert _looks_like_action_ref("add that to my daily notes")
-
-    def test_no_escalation_for_plain_text(self) -> None:
-        from kavi.agent.parser import _looks_like_action_ref
-
-        assert not _looks_like_action_ref("hello there")
-
-    def test_no_escalation_for_verb_without_ref(self) -> None:
-        from kavi.agent.parser import _looks_like_action_ref
-
-        assert not _looks_like_action_ref("write a new note about python")
-
-    def test_no_escalation_for_ref_without_verb(self) -> None:
-        from kavi.agent.parser import _looks_like_action_ref
-
-        assert not _looks_like_action_ref("what about that")
-
-    def test_escalation_routes_to_skill(self) -> None:
-        """Deterministic fallback: action+ref escalates to LLM → skill."""
-        llm_resp = json.dumps({
-            "kind": "skill_invocation",
-            "skill_name": "create_daily_note",
-            "input": {"content": "ref:last"},
-        })
-        with patch(_GEN, return_value=llm_resp):
-            intent, _ = parse_intent(
-                "can you write that to my daily notes",
-                SKILL_INFOS,
-                mode="deterministic",
-            )
-        assert isinstance(intent, SkillInvocationIntent)
-        assert intent.skill_name == "create_daily_note"
-
-    def test_escalation_falls_to_talk_if_llm_says_talk(self) -> None:
-        """If LLM also returns talk, fall through to TalkIntent."""
-        llm_resp = json.dumps({
-            "kind": "talk",
-            "message": "just chatting",
-        })
-        with patch(_GEN, return_value=llm_resp):
-            intent, _ = parse_intent(
-                "save that somewhere",
-                SKILL_INFOS,
-                mode="deterministic",
-            )
-        assert isinstance(intent, TalkIntent)
