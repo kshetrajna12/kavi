@@ -1,5 +1,8 @@
 """Shared constants for the agent layer."""
 
+# Pseudo-skill name for TalkIntent execution records.
+TALK_SKILL_NAME = "__talk__"
+
 # Side-effect classes that require user confirmation before execution
 CONFIRM_SIDE_EFFECTS: frozenset[str] = frozenset({
     "FILE_WRITE", "NETWORK", "SECRET_READ",

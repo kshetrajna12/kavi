@@ -21,6 +21,7 @@ from kavi.agent.models import (
     SearchAndSummarizeIntent,
     SkillAction,
     SkillInvocationIntent,
+    TalkIntent,
     UnsupportedIntent,
     WriteNoteIntent,
 )
@@ -282,10 +283,19 @@ def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
 
 
 _GEN = "kavi.agent.parser.generate"
+_TALK_GEN = "kavi.llm.spark.generate"
+_TALK_FALLBACK = (
+    "I can help you search notes, summarize them, write new notes, "
+    "and more. Type 'help' to see available commands."
+)
 
 
-def _ctx(llm_return=None, llm_error=None):
-    """Return ExitStack context patching consumer + optional LLM."""
+def _ctx(llm_return=None, llm_error=None, talk_return=None):
+    """Return ExitStack context patching consumer + optional LLM.
+
+    talk_return: response string for TalkIntent's generate() call.
+                 Defaults to _TALK_FALLBACK if not specified.
+    """
     stack = ExitStack()
     stack.enter_context(
         patch("kavi.consumer.shim.list_skills", return_value=ENTRIES),
@@ -316,6 +326,10 @@ def _ctx(llm_return=None, llm_error=None):
         stack.enter_context(
             patch(_GEN, return_value=llm_return),
         )
+    # Always patch the talk handler's generate to avoid real Sparkstation calls
+    stack.enter_context(
+        patch(_TALK_GEN, return_value=talk_return or _TALK_FALLBACK),
+    )
     return stack
 
 
@@ -457,25 +471,25 @@ class TestParserDeterministic:
         assert isinstance(intent, SearchAndSummarizeIntent)
         assert intent.query == "python"
 
-    def test_unsupported_message(self) -> None:
+    def test_unmatched_becomes_talk(self) -> None:
         intent = self._parse("do something random")
-        assert isinstance(intent, UnsupportedIntent)
-        assert "Available commands" in intent.message
+        assert isinstance(intent, TalkIntent)
+        assert intent.message == "do something random"
 
-    def test_ambiguous_input_not_executed(self) -> None:
-        """Ambiguous text without a command prefix → UnsupportedIntent."""
+    def test_ambiguous_input_becomes_talk(self) -> None:
+        """Ambiguous text without a command prefix → TalkIntent."""
         intent = self._parse("Kshetrajna Note")
-        assert isinstance(intent, UnsupportedIntent)
+        assert isinstance(intent, TalkIntent)
 
-    def test_bare_text_not_executed(self) -> None:
-        """Bare sentence without command prefix → UnsupportedIntent."""
+    def test_bare_text_becomes_talk(self) -> None:
+        """Bare sentence without command prefix → TalkIntent."""
         intent = self._parse("notes about machine learning")
-        assert isinstance(intent, UnsupportedIntent)
+        assert isinstance(intent, TalkIntent)
 
     def test_partial_prefix_not_matched(self) -> None:
         """'searching' is not 'search' — should not match."""
         intent = self._parse("searching for python notes")
-        assert isinstance(intent, UnsupportedIntent)
+        assert isinstance(intent, TalkIntent)
 
     def test_daily_shorthand(self) -> None:
         intent = self._parse("daily Meeting notes from standup")
@@ -502,9 +516,9 @@ class TestParserDeterministic:
         assert intent.input["content"] == "reviewed PR #42"
 
     def test_daily_empty_content_no_match(self) -> None:
-        """'daily' alone should not match."""
+        """'daily' alone should not match a skill — falls to TalkIntent."""
         intent = self._parse("daily")
-        assert isinstance(intent, UnsupportedIntent)
+        assert isinstance(intent, TalkIntent)
 
     def test_spark_unavailable_triggers_fallback(self) -> None:
         from kavi.llm.spark import SparkUnavailableError
@@ -592,14 +606,13 @@ class TestParserSkillInvocation:
         assert intent.skill_name == "http_get_json"
         assert intent.input["url"] == "https://api.example.com"
 
-    def test_unsupported_lists_all_skills(self) -> None:
-        """Help text includes all skill names."""
+    def test_unmatched_becomes_talk_with_message(self) -> None:
+        """Unmatched input returns TalkIntent preserving the message."""
         intent, _ = parse_intent(
             "do something weird", SKILL_INFOS, mode="deterministic",
         )
-        assert isinstance(intent, UnsupportedIntent)
-        assert "http_get_json" in intent.message
-        assert "read_notes_by_tag" in intent.message
+        assert isinstance(intent, TalkIntent)
+        assert intent.message == "do something weird"
 
 
 # ── Planner tests ────────────────────────────────────────────────────
@@ -644,6 +657,11 @@ class TestPlanner:
 
     def test_unsupported_returns_none(self) -> None:
         intent = UnsupportedIntent(message="nope")
+        assert intent_to_plan(intent) is None
+
+    def test_talk_returns_none(self) -> None:
+        """TalkIntent has no plan — handled directly by core."""
+        intent = TalkIntent(message="hello")
         assert intent_to_plan(intent) is None
 
     def test_chain_max_two_steps(self) -> None:
@@ -804,6 +822,129 @@ class TestHandleMessage:
         assert resp.records[0].output_json["count"] == 1
 
 
+# ── TalkIntent integration tests ─────────────────────────────────────
+
+
+class TestTalkIntent:
+    """TalkIntent: conversational turns with effect=NONE."""
+
+    def test_talk_generates_response(self) -> None:
+        """TalkIntent produces __talk__ ExecutionRecord with response."""
+        with _ctx(talk_return="Hello! How can I help you?"):
+            resp = handle_message(
+                "hello there",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, TalkIntent)
+        assert resp.intent.message == "hello there"
+        assert resp.error is None
+        assert len(resp.records) == 1
+        rec = resp.records[0]
+        assert rec.skill_name == "__talk__"
+        assert rec.side_effect_class == "NONE"
+        assert rec.source_hash == ""
+        assert rec.success is True
+        assert rec.output_json is not None
+        assert rec.output_json["response"] == "Hello! How can I help you?"
+        assert rec.input_json["message"] == "hello there"
+
+    def test_talk_no_confirmation_needed(self) -> None:
+        """TalkIntent has no side effects — never needs confirmation."""
+        with _ctx():
+            resp = handle_message(
+                "what's up",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.needs_confirmation is False
+        assert resp.pending is None
+
+    def test_talk_no_plan(self) -> None:
+        """TalkIntent has no plan — it's handled directly."""
+        with _ctx():
+            resp = handle_message(
+                "how are you",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert resp.plan is None
+
+    def test_talk_logged_to_file(self, tmp_path: Path) -> None:
+        """TalkIntent execution records are logged to JSONL."""
+        log_file = tmp_path / "talk.jsonl"
+        with _ctx(talk_return="I'm good, thanks!"):
+            handle_message(
+                "how are you",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                log_path=log_file,
+            )
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 1
+        rec = json.loads(lines[0])
+        assert rec["skill_name"] == "__talk__"
+        assert rec["side_effect_class"] == "NONE"
+        assert rec["output_json"]["response"] == "I'm good, thanks!"
+
+    def test_talk_updates_session(self) -> None:
+        """TalkIntent updates session with __talk__ anchor."""
+        from kavi.agent.models import SessionContext
+
+        session = SessionContext()
+        with _ctx(talk_return="Sure, I can help!"):
+            resp = handle_message(
+                "can you help me",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+                session=session,
+            )
+        assert resp.session is not None
+        assert len(resp.session.anchors) == 1
+        assert resp.session.anchors[0].skill_name == "__talk__"
+
+    def test_talk_fallback_on_spark_down(self) -> None:
+        """When Sparkstation is down, TalkIntent uses canned fallback."""
+        from kavi.llm.spark import SparkUnavailableError
+
+        with _ctx(), patch(
+            _TALK_GEN, side_effect=SparkUnavailableError("down"),
+        ):
+            resp = handle_message(
+                "tell me a joke",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        assert isinstance(resp.intent, TalkIntent)
+        assert resp.error is None
+        assert len(resp.records) == 1
+        assert "help" in resp.records[0].output_json["response"].lower()
+
+    def test_talk_via_llm_parser(self) -> None:
+        """LLM parser returning kind=talk → TalkIntent."""
+        llm = json.dumps({"kind": "talk", "message": "just chatting"})
+        with _ctx(llm_return=llm, talk_return="Nice to chat!"):
+            resp = handle_message(
+                "just chatting",
+                registry_path=FAKE_REGISTRY,
+            )
+        assert isinstance(resp.intent, TalkIntent)
+        assert resp.records[0].skill_name == "__talk__"
+
+    def test_talk_serializes_to_json(self) -> None:
+        """TalkIntent responses round-trip through JSON."""
+        with _ctx(talk_return="Hello!"):
+            resp = handle_message(
+                "hi",
+                registry_path=FAKE_REGISTRY,
+                parse_mode="deterministic",
+            )
+        data = json.loads(resp.model_dump_json())
+        assert data["intent"]["kind"] == "talk"
+        assert data["records"][0]["skill_name"] == "__talk__"
+        assert data["records"][0]["side_effect_class"] == "NONE"
+
+
 # ── Chat policy tests ────────────────────────────────────────────────
 
 
@@ -916,7 +1057,8 @@ class TestHandleMessageFallback:
         assert isinstance(resp.intent, SearchAndSummarizeIntent)
         assert len(resp.records) == 2
 
-    def test_fallback_unsupported(self) -> None:
+    def test_fallback_talk(self) -> None:
+        """Spark down + unmatched input → TalkIntent with fallback response."""
         from kavi.llm.spark import SparkUnavailableError
 
         err = SparkUnavailableError("down")
@@ -925,24 +1067,28 @@ class TestHandleMessageFallback:
                 "do something weird",
                 registry_path=FAKE_REGISTRY,
             )
-        assert isinstance(resp.intent, UnsupportedIntent)
-        assert resp.error is not None
+        assert isinstance(resp.intent, TalkIntent)
+        assert resp.error is None
+        assert len(resp.records) == 1
+        assert resp.records[0].skill_name == "__talk__"
+        assert resp.records[0].output_json is not None
 
 
 class TestDeterministicParseMode:
     """handle_message with parse_mode='deterministic' (REPL mode)."""
 
-    def test_ambiguous_input_returns_unsupported(self) -> None:
-        """Ambiguous text in deterministic mode → error, no execution."""
+    def test_ambiguous_input_becomes_talk(self) -> None:
+        """Ambiguous text in deterministic mode → TalkIntent, generates response."""
         with _ctx():
             resp = handle_message(
                 "Kshetrajna Note",
                 registry_path=FAKE_REGISTRY,
                 parse_mode="deterministic",
             )
-        assert isinstance(resp.intent, UnsupportedIntent)
-        assert resp.error is not None
-        assert resp.records == []
+        assert isinstance(resp.intent, TalkIntent)
+        assert resp.error is None
+        assert len(resp.records) == 1
+        assert resp.records[0].skill_name == "__talk__"
 
     def test_deterministic_search_works(self) -> None:
         with _ctx():

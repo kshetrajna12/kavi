@@ -708,6 +708,12 @@ def _chat_repl(registry_path: Path, log_path: Path | None) -> None:
             rprint(f"[red]Error:[/red] {resp.error}")
         elif resp.records:
             for rec in resp.records:
+                if rec.skill_name == "__talk__":
+                    # TalkIntent: show response text directly
+                    text = (rec.output_json or {}).get("response", "")
+                    if text:
+                        rprint(text)
+                    continue
                 status = "[green]OK[/green]" if rec.success else "[red]FAIL[/red]"
                 rprint(f"  {rec.skill_name}: {status}")
                 if rec.output_json:

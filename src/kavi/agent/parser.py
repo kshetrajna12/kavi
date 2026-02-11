@@ -18,6 +18,7 @@ from kavi.agent.models import (
     ParsedIntent,
     SearchAndSummarizeIntent,
     SkillInvocationIntent,
+    TalkIntent,
     TransformIntent,
     UnsupportedIntent,
     WriteNoteIntent,
@@ -51,7 +52,11 @@ these schemas:
 5. Help / list skills / capabilities:
    {"kind": "help", "warnings": ["..."]}
 
-6. Anything else:
+6. General conversation (no skill needed):
+   {"kind": "talk", "message": "<the user's message>",
+    "warnings": ["..."]}
+
+7. Impossible or harmful requests:
    {"kind": "unsupported",
     "message": "<explain what is supported>",
     "warnings": ["..."]}
@@ -72,6 +77,10 @@ add a warning for each ignored action.
 - For write_note, both title and body are required. If body is missing,
   still return write_note with an empty body string.
 - Omit the "warnings" field entirely if there are no warnings.
+- If the message is general conversation, a greeting, a question not about \
+notes, or anything that doesn't clearly require a skill, use "talk".
+- Reserve "unsupported" for harmful or impossible requests only (e.g. \
+"delete everything", "hack my neighbor").
 - CORRECTIONS: If the user says "no, I meant", "but paragraph", "make it \
 shorter", "try X instead" — use "transform" with overrides containing the \
 changed fields. target_ref defaults to "last". Example: "but paragraph" → \
@@ -221,12 +230,7 @@ def _deterministic_parse(
             skill_name=skill_match.name, input=inp,
         )
 
-    skill_names = _available_skill_commands(skills)
-    return UnsupportedIntent(
-        message=f"Unknown command. Available commands: "
-        f"search <query>, find <query>, summarize <path>, "
-        f"write <title>{skill_names}",
-    )
+    return TalkIntent(message=msg)
 
 
 # ── Reference detection (D015) ────────────────────────────────────────
@@ -439,6 +443,8 @@ def _dict_to_intent(data: dict) -> ParsedIntent:
         return TransformIntent(**data)
     if kind == "help":
         return HelpIntent()
+    if kind == "talk":
+        return TalkIntent(message=data.get("message", ""))
     # Backward compat: LLM may still emit summarize_note → convert
     if kind == "summarize_note":
         return SkillInvocationIntent(

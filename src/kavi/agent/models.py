@@ -171,6 +171,17 @@ class HelpIntent(BaseModel):
     kind: Literal["help"] = "help"
 
 
+class TalkIntent(BaseModel):
+    """Conversational turn — no tool invocation, effect=NONE.
+
+    Default path when no skill is clearly required. Response is
+    generated via Sparkstation and logged as an ExecutionRecord.
+    """
+
+    kind: Literal["talk"] = "talk"
+    message: str
+
+
 class UnsupportedIntent(BaseModel):
     kind: Literal["unsupported"] = "unsupported"
     message: str
@@ -182,6 +193,7 @@ ParsedIntent = (
     | SkillInvocationIntent
     | TransformIntent
     | HelpIntent
+    | TalkIntent
     | UnsupportedIntent
 )
 

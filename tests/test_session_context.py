@@ -1032,8 +1032,8 @@ class TestHandleMessageWithSession:
         assert "search_notes" in skill_names
         assert "summarize_note" in skill_names
 
-    def test_session_none_on_error(self) -> None:
-        """On error paths, session may still be returned."""
+    def test_talk_intent_updates_session(self) -> None:
+        """TalkIntent produces a __talk__ record and updates session."""
         session = SessionContext()
         with _ctx():
             resp = handle_message(
@@ -1042,8 +1042,10 @@ class TestHandleMessageWithSession:
                 parse_mode="deterministic",
                 session=session,
             )
-        # Even on error, if session was passed, we get it back
-        assert resp.error is not None
+        # TalkIntent succeeds and updates session with __talk__ anchor
+        assert resp.error is None
+        assert resp.session is not None
+        assert any(a.skill_name == "__talk__" for a in resp.session.anchors)
 
     def test_ref_resolution_in_handle_message(self) -> None:
         """ref:last in input resolves to prior search result."""

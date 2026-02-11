@@ -10,7 +10,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from kavi.agent.constants import CHAT_DEFAULT_ALLOWED_EFFECTS, CONFIRM_SIDE_EFFECTS
+from kavi.agent.constants import (
+    CHAT_DEFAULT_ALLOWED_EFFECTS,
+    CONFIRM_SIDE_EFFECTS,
+    TALK_SKILL_NAME,
+)
 from kavi.agent.models import (
     AgentResponse,
     AmbiguityResponse,
@@ -20,6 +24,7 @@ from kavi.agent.models import (
     PendingConfirmation,
     SessionContext,
     SkillAction,
+    TalkIntent,
     TransformIntent,
     UnsupportedIntent,
     WriteNoteIntent,
@@ -79,7 +84,7 @@ def handle_message(
     intent, warnings = parse_intent(message, skills, mode=parse_mode)
 
     # 2b. Resolve references (D015)
-    if session is not None and not isinstance(intent, (UnsupportedIntent, HelpIntent)):
+    if session is not None and not isinstance(intent, (UnsupportedIntent, HelpIntent, TalkIntent)):
         resolved = resolve_refs(intent, session, skills=skills)
         if isinstance(resolved, AmbiguityResponse):
             return AgentResponse(
@@ -116,6 +121,15 @@ def handle_message(
             warnings=warnings,
             help_text=format_index(index),
             session=session if session is not None else None,
+        )
+
+    # 3c. Talk — generate conversational response, log as ExecutionRecord
+    if isinstance(intent, TalkIntent):
+        return _handle_talk(
+            intent,
+            session=session,
+            log_path=log_path,
+            warnings=warnings,
         )
 
     # 4. Plan
@@ -332,3 +346,97 @@ def _execute(plan: SkillAction | ChainAction, registry_path: Path) -> list[Execu
         return consume_chain(registry_path, plan.chain)
     msg = f"Unknown plan type: {type(plan)}"
     raise ValueError(msg)
+
+
+# ── TalkIntent handling ──────────────────────────────────────────────
+
+_TALK_SYSTEM = (
+    "You are Kavi, a personal knowledge assistant. "
+    "You help users manage their notes, search for information, "
+    "and organize their knowledge. "
+    "Respond naturally and concisely. "
+    "If the user asks what you can do, mention you can search notes, "
+    "summarize them, write new notes, and fetch data from the web."
+)
+
+_TALK_FALLBACK = (
+    "I can help you search notes, summarize them, write new notes, "
+    "and more. Type 'help' to see available commands."
+)
+
+
+def _handle_talk(
+    intent: TalkIntent,
+    *,
+    session: SessionContext | None,
+    log_path: Path | None,
+    warnings: list[str] | None,
+) -> AgentResponse:
+    """Generate a conversational response and log as ExecutionRecord."""
+    import datetime
+
+    started_at = datetime.datetime.now(datetime.UTC).isoformat()
+    response_text = _generate_talk_response(intent.message, session)
+    finished_at = datetime.datetime.now(datetime.UTC).isoformat()
+
+    record = ExecutionRecord(
+        skill_name=TALK_SKILL_NAME,
+        source_hash="",
+        side_effect_class="NONE",
+        input_json={"message": intent.message},
+        output_json={"response": response_text},
+        success=True,
+        error=None,
+        started_at=started_at,
+        finished_at=finished_at,
+    )
+
+    if log_path is not None:
+        writer = ExecutionLogWriter(log_path)
+        writer.append(record)
+
+    updated_session = None
+    if session is not None:
+        updated_session = extract_anchors([record], existing=session)
+
+    return AgentResponse(
+        intent=intent,
+        records=[record],
+        warnings=warnings or [],
+        session=updated_session,
+    )
+
+
+def _generate_talk_response(
+    message: str,
+    session: SessionContext | None,
+) -> str:
+    """Generate a conversational response via Sparkstation.
+
+    Falls back to a canned response if Sparkstation is unavailable.
+    """
+    from kavi.llm.spark import SparkUnavailableError, generate
+
+    context_lines: list[str] = []
+    if session and session.anchors:
+        context_lines.append("Recent context:")
+        for anchor in session.anchors[-3:]:
+            data_summary = ", ".join(
+                f"{k}={v}" for k, v in anchor.data.items()
+            )
+            context_lines.append(
+                f"- {anchor.skill_name}: {data_summary}",
+            )
+
+    prompt_parts = [_TALK_SYSTEM]
+    if context_lines:
+        prompt_parts.append("\n".join(context_lines))
+    prompt_parts.append(f"User: {message}")
+    prompt_parts.append("Assistant:")
+
+    prompt = "\n\n".join(prompt_parts)
+
+    try:
+        return generate(prompt, temperature=0.7)
+    except (SparkUnavailableError, Exception):  # noqa: BLE001
+        return _TALK_FALLBACK
