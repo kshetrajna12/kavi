@@ -182,6 +182,13 @@ class TalkIntent(BaseModel):
     message: str
 
 
+class ClarifyIntent(BaseModel):
+    """Model needs more info — ask user a question (D019)."""
+
+    kind: Literal["clarify"] = "clarify"
+    question: str
+
+
 class UnsupportedIntent(BaseModel):
     kind: Literal["unsupported"] = "unsupported"
     message: str
@@ -194,6 +201,7 @@ ParsedIntent = (
     | TransformIntent
     | HelpIntent
     | TalkIntent
+    | ClarifyIntent
     | UnsupportedIntent
 )
 

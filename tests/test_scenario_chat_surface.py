@@ -26,6 +26,7 @@ from kavi.agent.models import (
     WriteNoteIntent,
 )
 from kavi.agent.presenter import present
+from kavi.llm.spark import ToolCallResult
 from tests.test_agent_chat_v0 import (
     FAKE_REGISTRY,
     _ctx,
@@ -470,14 +471,12 @@ class TestScenarioTalkThenDailyNote:
         session = r1.session or session
         assert any(a.skill_name == "__talk__" for a in session.anchors)
 
-        # Turn 2: "write that to my daily notes" — LLM escalation
-        # Mock the LLM to return create_daily_note with ref:last
-        llm_resp = json.dumps({
-            "kind": "skill_invocation",
+        # Turn 2: "write that to my daily notes" — LLM tool call
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "create_daily_note",
             "input": {"content": "ref:last"},
         })
-        with _ctx(llm_return=llm_resp):
+        with _ctx(llm_return=tc):
             r2 = handle_message(
                 "write that to my daily notes",
                 registry_path=FAKE_REGISTRY,
@@ -525,13 +524,12 @@ class TestScenarioTalkThenDailyNote:
         assert r1.error is None
         session = r1.session or session
 
-        # Turn 2: "add that to daily" via LLM
-        llm_resp = json.dumps({
-            "kind": "skill_invocation",
+        # Turn 2: "add that to daily" via LLM tool call
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "create_daily_note",
             "input": {"content": "ref:last"},
         })
-        with _ctx(llm_return=llm_resp):
+        with _ctx(llm_return=tc):
             r2 = handle_message(
                 "add that to my daily",
                 registry_path=FAKE_REGISTRY,

@@ -179,8 +179,10 @@ class TestLLMSuccess:
         skill = SummarizeNoteSkill()
         skill.execute(SummarizeNoteInput(path="note.md", style="paragraph"))
 
-        prompt_arg = mock_gen.call_args[0][0]
-        assert "paragraph" in prompt_arg
+        # D019: generate() now takes messages list
+        messages_arg = mock_gen.call_args[0][0]
+        system_content = messages_arg[0]["content"]
+        assert "paragraph" in system_content
 
     @patch("kavi.skills.summarize_note.generate")
     def test_bullet_style_in_prompt(self, mock_gen: MagicMock, tmp_path: Path) -> None:
@@ -190,8 +192,10 @@ class TestLLMSuccess:
         skill = SummarizeNoteSkill()
         skill.execute(SummarizeNoteInput(path="note.md", style="bullet"))
 
-        prompt_arg = mock_gen.call_args[0][0]
-        assert "bullet" in prompt_arg
+        # D019: generate() now takes messages list
+        messages_arg = mock_gen.call_args[0][0]
+        system_content = messages_arg[0]["content"]
+        assert "bullet" in system_content
 
 
 # ---------------------------------------------------------------------------

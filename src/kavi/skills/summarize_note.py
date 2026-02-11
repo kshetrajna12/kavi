@@ -81,18 +81,23 @@ class SummarizeNoteSkill(BaseSkill):
         if truncated:
             content = content[: input_data.max_chars]
 
-        # Build LLM prompt
-        prompt = (
-            f"Summarize the following markdown note in {input_data.style} style.\n"
-            "Return ONLY a JSON object with keys:\n"
-            '- "summary": a string summary\n'
-            '- "key_points": a list of strings with key points\n\n'
-            f"Note content:\n{content}"
-        )
+        # Build LLM messages (D019: role-separated)
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    f"Summarize the following markdown note in {input_data.style} style.\n"
+                    "Return ONLY a JSON object with keys:\n"
+                    '- "summary": a string summary\n'
+                    '- "key_points": a list of strings with key points'
+                ),
+            },
+            {"role": "user", "content": content},
+        ]
 
         # Attempt LLM call
         try:
-            raw = generate(prompt, model=SPARK_MODEL, timeout=input_data.timeout_s)
+            raw = generate(messages, model=SPARK_MODEL, timeout=input_data.timeout_s)
             parsed = json.loads(raw)
             summary = str(parsed["summary"])
             key_points = [str(kp) for kp in parsed["key_points"]]

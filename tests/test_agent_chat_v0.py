@@ -16,6 +16,7 @@ from kavi.agent.core import handle_message
 from kavi.agent.models import (
     AgentResponse,
     ChainAction,
+    ClarifyIntent,
     HelpIntent,
     ParsedIntent,
     SearchAndSummarizeIntent,
@@ -28,6 +29,7 @@ from kavi.agent.models import (
 from kavi.agent.parser import _is_help_request, parse_intent
 from kavi.agent.planner import intent_to_plan
 from kavi.consumer.shim import SkillInfo
+from kavi.llm.spark import ToolCallResult
 from kavi.skills.base import BaseSkill, SkillInput, SkillOutput
 
 # ── Skill stubs ──────────────────────────────────────────────────────
@@ -321,7 +323,7 @@ def _load_skill_stub(registry_path: Path, name: str) -> BaseSkill:
     raise KeyError(f"Skill '{name}' not found")
 
 
-_GEN = "kavi.agent.parser.generate"
+_GEN = "kavi.agent.parser.generate_tool_call"
 _TALK_GEN = "kavi.llm.spark.generate"
 _TALK_FALLBACK = (
     "I'm here to help! I can search your notes, summarize them, "
@@ -376,15 +378,14 @@ def _ctx(llm_return=None, llm_error=None, talk_return=None):
 
 
 class TestParserLLMSuccess:
-    """parse_intent with mocked Sparkstation returning valid JSON."""
+    """parse_intent with mocked Sparkstation returning tool calls (D019)."""
 
     def test_search_and_summarize(self) -> None:
-        resp = {
-            "kind": "search_and_summarize",
-            "query": "machine learning",
-            "top_k": 3,
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "search_and_summarize",
+            "input": {"query": "machine learning", "top_k": 3},
+        })
+        with patch(_GEN, return_value=tc):
             intent, warnings = parse_intent(
                 "find notes about machine learning", SKILL_INFOS,
             )
@@ -393,10 +394,13 @@ class TestParserLLMSuccess:
         assert intent.top_k == 3
         assert warnings == []
 
-    def test_summarize_note_backward_compat(self) -> None:
-        """LLM returning summarize_note kind → SkillInvocationIntent."""
-        resp = {"kind": "summarize_note", "path": "notes/ml.md"}
-        with patch(_GEN, return_value=json.dumps(resp)):
+    def test_summarize_note_via_invoke_skill(self) -> None:
+        """LLM returning invoke_skill(summarize_note) → SkillInvocationIntent."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "notes/ml.md"},
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
@@ -405,12 +409,11 @@ class TestParserLLMSuccess:
         assert intent.input["path"] == "notes/ml.md"
 
     def test_write_note(self) -> None:
-        resp = {
-            "kind": "write_note",
-            "title": "Test",
-            "body": "Hello world",
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "Test", "body": "Hello world"},
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "write a note called Test", SKILL_INFOS,
             )
@@ -418,52 +421,45 @@ class TestParserLLMSuccess:
         assert intent.title == "Test"
         assert intent.body == "Hello world"
 
-    def test_unsupported(self) -> None:
-        resp = {"kind": "unsupported", "message": "Not supported"}
-        with patch(_GEN, return_value=json.dumps(resp)):
+    def test_harmful_request_routes_to_talk(self) -> None:
+        """Harmful requests → talk with polite refusal (D019: no unsupported tool)."""
+        tc = ToolCallResult("talk", {
+            "message": "I can't help with that.",
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "delete everything", SKILL_INFOS,
             )
-        assert isinstance(intent, UnsupportedIntent)
+        assert isinstance(intent, TalkIntent)
 
-    def test_llm_returns_markdown_fenced_json(self) -> None:
-        """LLM returning summarize_note in fences → SkillInvocationIntent."""
-        raw = (
-            '```json\n'
-            '{"kind": "summarize_note", "path": "a.md"}\n'
-            '```'
-        )
-        with patch(_GEN, return_value=raw):
+    def test_clarify_intent(self) -> None:
+        """Ambiguous request → ClarifyIntent (D019)."""
+        tc = ToolCallResult("clarify", {
+            "question": "Which note would you like to summarize?",
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
-                "summarize a.md", SKILL_INFOS,
+                "summarize", SKILL_INFOS,
             )
-        assert isinstance(intent, SkillInvocationIntent)
-        assert intent.skill_name == "summarize_note"
-        assert intent.input["path"] == "a.md"
+        assert isinstance(intent, ClarifyIntent)
+        assert "which" in intent.question.lower()
 
-    def test_llm_warnings_propagated(self) -> None:
-        """LLM returns warnings for trailing intents."""
-        resp = {
-            "kind": "search_and_summarize",
-            "query": "architecture",
-            "warnings": [
-                "Ignored: write_note is not part of "
-                "search_and_summarize. Ask separately.",
-            ],
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
-            intent, warnings = parse_intent(
-                "search architecture then write a note",
-                SKILL_INFOS,
+    def test_meta_help(self) -> None:
+        """meta(command=help) → HelpIntent."""
+        tc = ToolCallResult("meta", {"command": "help"})
+        with patch(_GEN, return_value=tc):
+            intent, _ = parse_intent(
+                "what can you do", SKILL_INFOS,
             )
-        assert isinstance(intent, SearchAndSummarizeIntent)
-        assert len(warnings) == 1
-        assert "write_note" in warnings[0]
+        assert isinstance(intent, HelpIntent)
 
-    def test_no_warnings_field_means_empty_list(self) -> None:
-        """LLM omits warnings → empty list, not error."""
-        resp = {"kind": "summarize_note", "path": "a.md"}
-        with patch(_GEN, return_value=json.dumps(resp)):
+    def test_no_warnings_from_tool_calls(self) -> None:
+        """Tool call results produce empty warnings list."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "a.md"},
+        })
+        with patch(_GEN, return_value=tc):
             _, warnings = parse_intent(
                 "summarize a.md", SKILL_INFOS,
             )
@@ -572,20 +568,21 @@ class TestParserDeterministic:
         assert intent.skill_name == "summarize_note"
         assert warnings == []
 
-    def test_llm_bad_json_triggers_fallback(self) -> None:
-        with patch(_GEN, return_value="not json at all"):
+    def test_spark_error_triggers_fallback(self) -> None:
+        from kavi.llm.spark import SparkError
+
+        err = SparkError("no tool call")
+        with patch(_GEN, side_effect=err):
             intent, _ = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
         assert isinstance(intent, SkillInvocationIntent)
         assert intent.skill_name == "summarize_note"
 
-    def test_llm_validation_error_triggers_fallback(self) -> None:
-        """LLM returns valid JSON but fields fail Pydantic validation."""
-        # SearchAndSummarizeIntent requires 'query' — omit it to trigger
-        # ValidationError in _dict_to_intent.
-        bad_resp = {"kind": "search_and_summarize"}
-        with patch(_GEN, return_value=json.dumps(bad_resp)):
+    def test_validation_error_triggers_fallback(self) -> None:
+        """Bad tool call args trigger fallback to deterministic."""
+
+        with patch(_GEN, side_effect=ValueError("bad args")):
             intent, _ = parse_intent(
                 "summarize notes/ml.md", SKILL_INFOS,
             )
@@ -598,12 +595,11 @@ class TestParserSkillInvocation:
     """Tests for the generic SkillInvocationIntent path."""
 
     def test_llm_returns_skill_invocation(self) -> None:
-        resp = {
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "read_notes_by_tag",
             "input": {"tag": "cooking"},
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "show me notes tagged cooking", SKILL_INFOS,
             )
@@ -612,15 +608,14 @@ class TestParserSkillInvocation:
         assert intent.input == {"tag": "cooking"}
 
     def test_llm_returns_http_get_json(self) -> None:
-        resp = {
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "http_get_json",
             "input": {
                 "url": "https://api.example.com/data",
                 "allowed_hosts": ["api.example.com"],
             },
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "get data from api.example.com", SKILL_INFOS,
             )
@@ -730,10 +725,11 @@ class TestHandleMessage:
     """Full pipeline: parse -> plan -> execute via mocked consumer."""
 
     def test_search_and_summarize_happy_path(self) -> None:
-        llm = json.dumps({
-            "kind": "search_and_summarize", "query": "ml",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "search_and_summarize",
+            "input": {"query": "ml"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "find ml notes", registry_path=FAKE_REGISTRY,
             )
@@ -746,11 +742,12 @@ class TestHandleMessage:
         assert not resp.needs_confirmation
 
     def test_summarize_happy_path(self) -> None:
-        """summarize_note via backward-compat → SkillInvocationIntent."""
-        llm = json.dumps({
-            "kind": "summarize_note", "path": "notes/ml.md",
+        """invoke_skill(summarize_note) → SkillInvocationIntent."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "notes/ml.md"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize notes/ml.md",
                 registry_path=FAKE_REGISTRY,
@@ -764,10 +761,11 @@ class TestHandleMessage:
 
     def test_write_needs_confirmation_single_turn(self) -> None:
         """FILE_WRITE returns needs_confirmation when not confirmed."""
-        llm = json.dumps({
-            "kind": "write_note", "title": "Test", "body": "hi",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "Test", "body": "hi"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "write Test\nhi", registry_path=FAKE_REGISTRY,
             )
@@ -777,10 +775,11 @@ class TestHandleMessage:
 
     def test_write_confirmed_executes(self) -> None:
         """With confirmed=True, FILE_WRITE executes normally."""
-        llm = json.dumps({
-            "kind": "write_note", "title": "Test", "body": "hi",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "Test", "body": "hi"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "write Test\nhi",
                 registry_path=FAKE_REGISTRY,
@@ -790,25 +789,24 @@ class TestHandleMessage:
         assert len(resp.records) == 1
         assert resp.records[0].success
 
-    def test_unsupported_intent_returns_error(self) -> None:
-        llm = json.dumps({
-            "kind": "unsupported", "message": "Not supported",
+    def test_clarify_intent_returns_error(self) -> None:
+        """ClarifyIntent returns question as error (D019)."""
+        tc = ToolCallResult("clarify", {
+            "question": "Which notes do you want to delete?",
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "delete everything", registry_path=FAKE_REGISTRY,
             )
-        assert isinstance(resp.intent, UnsupportedIntent)
+        assert isinstance(resp.intent, ClarifyIntent)
         assert resp.error is not None
         assert resp.records == []
         assert resp.plan is None
 
     def test_response_always_has_intent(self) -> None:
         """AgentResponse always has a parsed intent, even on error."""
-        llm = json.dumps({
-            "kind": "unsupported", "message": "nope",
-        })
-        with _ctx(llm_return=llm):
+        tc = ToolCallResult("talk", {"message": "nope"})
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "gibberish", registry_path=FAKE_REGISTRY,
             )
@@ -816,10 +814,11 @@ class TestHandleMessage:
 
     def test_response_serializes_to_json(self) -> None:
         """AgentResponse can round-trip through JSON."""
-        llm = json.dumps({
-            "kind": "summarize_note", "path": "a.md",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "a.md"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md", registry_path=FAKE_REGISTRY,
             )
@@ -829,27 +828,12 @@ class TestHandleMessage:
         assert len(data["records"]) == 1
         assert data["warnings"] == []
 
-    def test_warnings_propagated_to_response(self) -> None:
-        """LLM parser warnings appear on AgentResponse.warnings."""
-        llm = json.dumps({
-            "kind": "search_and_summarize",
-            "query": "arch",
-            "warnings": ["Ignored: write_note. Ask separately."],
-        })
-        with _ctx(llm_return=llm):
-            resp = handle_message(
-                "search arch then write a note",
-                registry_path=FAKE_REGISTRY,
-            )
-        assert resp.warnings == ["Ignored: write_note. Ask separately."]
-        assert isinstance(resp.intent, SearchAndSummarizeIntent)
-        assert resp.error is None
-
     def test_no_warnings_by_default(self) -> None:
-        llm = json.dumps({
-            "kind": "summarize_note", "path": "a.md",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "a.md"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md", registry_path=FAKE_REGISTRY,
             )
@@ -857,12 +841,11 @@ class TestHandleMessage:
 
     def test_read_notes_by_tag_auto_executes(self) -> None:
         """READ_ONLY skill invocation executes without confirmation."""
-        llm = json.dumps({
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "read_notes_by_tag",
             "input": {"tag": "cooking"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "notes tagged cooking", registry_path=FAKE_REGISTRY,
             )
@@ -973,9 +956,9 @@ class TestTalkIntent:
         assert "help" in resp.records[0].output_json["response"].lower()
 
     def test_talk_via_llm_parser(self) -> None:
-        """LLM parser returning kind=talk → TalkIntent."""
-        llm = json.dumps({"kind": "talk", "message": "just chatting"})
-        with _ctx(llm_return=llm, talk_return="Nice to chat!"):
+        """LLM parser returning talk tool call → TalkIntent."""
+        tc = ToolCallResult("talk", {"message": "just chatting"})
+        with _ctx(llm_return=tc, talk_return="Nice to chat!"):
             resp = handle_message(
                 "just chatting",
                 registry_path=FAKE_REGISTRY,
@@ -1005,15 +988,14 @@ class TestChatPolicy:
 
     def test_network_blocked_by_default(self) -> None:
         """NETWORK skills are blocked under default chat policy."""
-        llm = json.dumps({
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "http_get_json",
             "input": {
                 "url": "https://api.example.com/data",
                 "allowed_hosts": ["api.example.com"],
             },
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "get data from api",
                 registry_path=FAKE_REGISTRY,
@@ -1025,15 +1007,14 @@ class TestChatPolicy:
 
     def test_network_allowed_with_explicit_effects(self) -> None:
         """NETWORK skill works when allowed_effects includes NETWORK."""
-        llm = json.dumps({
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "http_get_json",
             "input": {
                 "url": "https://api.example.com/data",
                 "allowed_hosts": ["api.example.com"],
             },
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "get data from api",
                 registry_path=FAKE_REGISTRY,
@@ -1046,15 +1027,14 @@ class TestChatPolicy:
 
     def test_network_still_needs_confirmation(self) -> None:
         """Even with allowed_effects, NETWORK needs confirmation."""
-        llm = json.dumps({
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "http_get_json",
             "input": {
                 "url": "https://api.example.com/data",
                 "allowed_hosts": ["api.example.com"],
             },
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "get data from api",
                 registry_path=FAKE_REGISTRY,
@@ -1113,6 +1093,7 @@ class TestHandleMessageFallback:
         """Spark down + unmatched input → TalkIntent with fallback response."""
         from kavi.llm.spark import SparkUnavailableError
 
+        # Both parser (generate_tool_call) and talk handler (generate) fail
         err = SparkUnavailableError("down")
         with _ctx(llm_error=err):
             resp = handle_message(
@@ -1203,10 +1184,11 @@ class TestExecutionLogging:
 
     def test_records_logged_to_jsonl(self, tmp_path: Path) -> None:
         log_file = tmp_path / "test.jsonl"
-        llm = json.dumps({
-            "kind": "summarize_note", "path": "a.md",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "a.md"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md",
                 registry_path=FAKE_REGISTRY,
@@ -1219,10 +1201,11 @@ class TestExecutionLogging:
         assert rec["skill_name"] == "summarize_note"
 
     def test_no_log_when_path_is_none(self) -> None:
-        llm = json.dumps({
-            "kind": "summarize_note", "path": "a.md",
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "summarize_note",
+            "input": {"path": "a.md"},
         })
-        with _ctx(llm_return=llm):
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "summarize a.md",
                 registry_path=FAKE_REGISTRY,
@@ -1295,11 +1278,11 @@ class TestHelpIntentDeterministic:
 
 
 class TestHelpIntentLLM:
-    """LLM parser returns HelpIntent when LLM emits kind=help."""
+    """LLM parser returns HelpIntent when LLM emits meta(help)."""
 
-    def test_llm_help_kind(self) -> None:
-        llm = json.dumps({"kind": "help"})
-        with patch(_GEN, return_value=llm):
+    def test_llm_help_via_meta(self) -> None:
+        tc = ToolCallResult("meta", {"command": "help"})
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent("what can you do", SKILL_INFOS)
         assert isinstance(intent, HelpIntent)
 
@@ -1365,8 +1348,8 @@ class TestHandleMessageHelp:
         assert resp.needs_confirmation is False
 
     def test_help_via_llm_mode(self) -> None:
-        llm = json.dumps({"kind": "help"})
-        with _ctx(llm_return=llm):
+        tc = ToolCallResult("meta", {"command": "help"})
+        with _ctx(llm_return=tc):
             resp = handle_message(
                 "what can you do",
                 registry_path=FAKE_REGISTRY,
@@ -1908,21 +1891,20 @@ class TestParserCreativeVsSave:
 
     def test_creative_write_routes_to_talk(self) -> None:
         """'write a poem about my dogs' → talk (generation, not save)."""
-        resp = {"kind": "talk", "message": "write a poem about my dogs"}
-        with patch(_GEN, return_value=json.dumps(resp)):
+        tc = ToolCallResult("talk", {"message": "write a poem about my dogs"})
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "write a poem about my dogs", SKILL_INFOS,
             )
         assert isinstance(intent, TalkIntent)
 
     def test_save_to_note_routes_to_write_note(self) -> None:
-        """'write that to a note' → write_note (save operation)."""
-        resp = {
-            "kind": "write_note",
-            "title": "ref:last",
-            "body": "ref:last",
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        """'write that to a note' → invoke_skill(write_note)."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "ref:last", "body": "ref:last"},
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "write that to a note", SKILL_INFOS,
             )
@@ -1930,16 +1912,15 @@ class TestParserCreativeVsSave:
 
 
 class TestParserActionRef:
-    """LLM parser routes action+ref to skill_invocation, not talk."""
+    """LLM parser routes action+ref to invoke_skill, not talk."""
 
     def test_llm_routes_daily_ref(self) -> None:
         """'write that to my daily notes' → create_daily_note with ref:last."""
-        resp = {
-            "kind": "skill_invocation",
+        tc = ToolCallResult("invoke_skill", {
             "skill_name": "create_daily_note",
             "input": {"content": "ref:last"},
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "write that to my daily notes", SKILL_INFOS,
             )
@@ -1948,13 +1929,12 @@ class TestParserActionRef:
         assert intent.input["content"] == "ref:last"
 
     def test_llm_routes_generic_write_ref(self) -> None:
-        """'save that to a note' → write_note with ref:last."""
-        resp = {
-            "kind": "write_note",
-            "title": "ref:last",
-            "body": "ref:last",
-        }
-        with patch(_GEN, return_value=json.dumps(resp)):
+        """'save that to a note' → invoke_skill(write_note)."""
+        tc = ToolCallResult("invoke_skill", {
+            "skill_name": "write_note",
+            "input": {"title": "ref:last", "body": "ref:last"},
+        })
+        with patch(_GEN, return_value=tc):
             intent, _ = parse_intent(
                 "save that to a note", SKILL_INFOS,
             )

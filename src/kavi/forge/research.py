@@ -310,32 +310,32 @@ def _check_escalation_triggers(
     return triggers
 
 
-def _format_advisory_prompt(analysis: FailureAnalysis, original_packet: str) -> str:
-    """Build the LLM prompt for retry advisory."""
-    return f"""You are a build system assistant. A skill build attempt failed.
+def _format_advisory_messages(
+    analysis: FailureAnalysis, original_packet: str,
+) -> list[dict[str, str]]:
+    """Build role-separated messages for retry advisory (D019)."""
+    system = (
+        "You are a build system assistant. A skill build attempt failed. "
+        "Propose a corrected BUILD_PACKET that addresses the failure. "
+        "Output ONLY the corrected BUILD_PACKET content (markdown), nothing else. "
+        "Keep the same structure but fix the instructions to avoid the failure. "
+        "Do NOT widen permissions, add secrets, or change the side effect class."
+    )
 
-## Failure Classification
-- **Kind:** {analysis.kind.value}
-- **Attempt:** {analysis.attempt_number}
+    user = (
+        f"## Failure Classification\n"
+        f"- **Kind:** {analysis.kind.value}\n"
+        f"- **Attempt:** {analysis.attempt_number}\n\n"
+        f"## Facts\n"
+        f"{chr(10).join(f'- {f}' for f in analysis.facts)}\n\n"
+        f"## Log Excerpt\n```\n{analysis.log_excerpt[:1500]}\n```\n\n"
+        f"## Original BUILD_PACKET\n```markdown\n{original_packet}\n```"
+    )
 
-## Facts
-{chr(10).join(f'- {f}' for f in analysis.facts)}
-
-## Log Excerpt
-```
-{analysis.log_excerpt[:1500]}
-```
-
-## Original BUILD_PACKET
-```markdown
-{original_packet}
-```
-
-## Task
-Propose a corrected BUILD_PACKET that addresses the failure. Output ONLY the corrected
-BUILD_PACKET content (markdown), nothing else. Keep the same structure but fix the
-instructions to avoid the failure. Do NOT widen permissions, add secrets, or change
-the side effect class."""
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
 
 
 def advise_retry(
@@ -357,9 +357,9 @@ def advise_retry(
     if not is_available():
         return original_packet, [EscalationTrigger.AMBIGUOUS]
 
-    prompt = _format_advisory_prompt(analysis, original_packet)
+    messages = _format_advisory_messages(analysis, original_packet)
     try:
-        proposed = generate(prompt, temperature=0)
+        proposed = generate(messages, temperature=0)
     except SparkUnavailableError:
         return original_packet, [EscalationTrigger.AMBIGUOUS]
 
