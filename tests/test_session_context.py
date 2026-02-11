@@ -1202,3 +1202,72 @@ class TestContentRefResolution:
         # path and title kept as-is
         assert result.input["path"] == "Inbox/AI/test.md"
         assert result.input["title"] == "Test"
+
+
+class TestWriteNoteIntentRefResolution:
+    """resolve_refs handles ref: markers in WriteNoteIntent fields."""
+
+    def test_write_note_body_ref_resolves_talk_response(self) -> None:
+        """'write that to a note' resolves body from TalkIntent anchor."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "__talk__", "aaa",
+                {"response": "Here is a lovely poem about dogs."},
+            ),
+        ]
+        intent = WriteNoteIntent(title="Dog Poem", body="ref:last")
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, WriteNoteIntent)
+        assert result.title == "Dog Poem"
+        assert result.body == "Here is a lovely poem about dogs."
+
+    def test_write_note_both_refs_resolve(self) -> None:
+        """Both title and body as ref:last resolve from anchor."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        ctx.anchors = [
+            _anchor(
+                "summarize_note", "bbb",
+                {"path": "notes/ml.md", "summary": "ML is fascinating."},
+            ),
+        ]
+        intent = WriteNoteIntent(title="ref:last", body="ref:last")
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, WriteNoteIntent)
+        # title uses _anchor_value → path field
+        assert result.title == "notes/ml.md"
+        # body uses _content_anchor_value → summary field
+        assert result.body == "ML is fascinating."
+
+    def test_write_note_no_ref_passes_through(self) -> None:
+        """WriteNoteIntent without refs passes through unchanged."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        intent = WriteNoteIntent(title="My Note", body="Some text.")
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, WriteNoteIntent)
+        assert result.title == "My Note"
+        assert result.body == "Some text."
+
+    def test_write_note_ref_no_session_passes_through(self) -> None:
+        """WriteNoteIntent with ref but no session passes through."""
+        from kavi.agent.resolver import resolve_refs
+
+        intent = WriteNoteIntent(title="My Note", body="ref:last")
+        result = resolve_refs(intent, None)
+        assert isinstance(result, WriteNoteIntent)
+        assert result.body == "ref:last"
+
+    def test_write_note_ref_empty_session_returns_ambiguity(self) -> None:
+        """WriteNoteIntent ref:last with empty session → AmbiguityResponse."""
+        from kavi.agent.resolver import resolve_refs
+
+        ctx = SessionContext()
+        intent = WriteNoteIntent(title="My Note", body="ref:last")
+        result = resolve_refs(intent, ctx)
+        assert isinstance(result, AmbiguityResponse)

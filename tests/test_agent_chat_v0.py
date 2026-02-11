@@ -1903,6 +1903,32 @@ class TestTalkGuardrails:
 # ── LLM parser: action + ref → skill invocation ──────────────────────
 
 
+class TestParserCreativeVsSave:
+    """LLM parser distinguishes creative requests from save operations."""
+
+    def test_creative_write_routes_to_talk(self) -> None:
+        """'write a poem about my dogs' → talk (generation, not save)."""
+        resp = {"kind": "talk", "message": "write a poem about my dogs"}
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, _ = parse_intent(
+                "write a poem about my dogs", SKILL_INFOS,
+            )
+        assert isinstance(intent, TalkIntent)
+
+    def test_save_to_note_routes_to_write_note(self) -> None:
+        """'write that to a note' → write_note (save operation)."""
+        resp = {
+            "kind": "write_note",
+            "title": "ref:last",
+            "body": "ref:last",
+        }
+        with patch(_GEN, return_value=json.dumps(resp)):
+            intent, _ = parse_intent(
+                "write that to a note", SKILL_INFOS,
+            )
+        assert isinstance(intent, WriteNoteIntent)
+
+
 class TestParserActionRef:
     """LLM parser routes action+ref to skill_invocation, not talk."""
 

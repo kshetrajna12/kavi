@@ -69,7 +69,15 @@ Rules:
 - Output ONLY valid JSON, no markdown fences, no extra text.
 - top_k defaults to 5, style defaults to "bullet" if not specified.
 - If the user wants to find/search notes, use search_and_summarize.
-- If the user wants to write/create a note, use write_note.
+- If the user wants to SAVE content to a note file, use write_note. \
+write_note is a STORAGE operation — it saves given content to disk.
+- CREATIVE REQUESTS are "talk", NOT write_note. If the user asks you to \
+compose, draft, generate, or create content (e.g. "write a poem about X", \
+"write me a story", "draft an email about Y", "write a summary of X"), \
+this is a generation request — use "talk". The user wants YOU to produce \
+the content, not to save something to a file.
+- The distinction: "write a poem about my dogs" → talk (generate content). \
+"write that to a note" → write_note (save prior result to file).
 - If the user mentions a specific .md file path to summarize, use \
 skill_invocation with skill_name "summarize_note".
 - For any other skill, use skill_invocation with the correct skill_name \

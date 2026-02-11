@@ -16,6 +16,7 @@ from kavi.agent.models import (
     SessionContext,
     SkillInvocationIntent,
     TransformIntent,
+    WriteNoteIntent,
     note_path_for_title,
 )
 from kavi.consumer.shim import ExecutionRecord, SkillInfo
@@ -159,6 +160,39 @@ def _resolve_write_that(
     )
 
 
+def _resolve_write_note_refs(
+    intent: WriteNoteIntent,
+    session: SessionContext,
+) -> WriteNoteIntent | AmbiguityResponse:
+    """Resolve ref: markers in WriteNoteIntent title and body fields."""
+    title = intent.title
+    body = intent.body
+
+    if title.startswith("ref:"):
+        ref = title[4:]
+        anchor = session.resolve(ref)
+        if anchor is None:
+            return AmbiguityResponse(
+                ref=ref, candidates=[],
+                message=f"Could not resolve '{ref}' — no prior results "
+                "to reference. Try running a command first.",
+            )
+        title = _anchor_value(anchor) or title
+
+    if body.startswith("ref:"):
+        ref = body[4:]
+        anchor = session.resolve(ref)
+        if anchor is None:
+            return AmbiguityResponse(
+                ref=ref, candidates=[],
+                message=f"Could not resolve '{ref}' — no prior results "
+                "to reference. Try running a command first.",
+            )
+        body = _content_anchor_value(anchor) or body
+
+    return WriteNoteIntent(title=title, body=body)
+
+
 def _resolve_transform(
     intent: TransformIntent,
     session: SessionContext,
@@ -226,6 +260,10 @@ def resolve_refs(
                 query=value, top_k=intent.top_k, style=intent.style,
             )
         return intent
+
+    # WriteNoteIntent: resolve ref: markers in title/body
+    if isinstance(intent, WriteNoteIntent):
+        return _resolve_write_note_refs(intent, session)
 
     # TransformIntent: re-invoke target skill with overrides
     if isinstance(intent, TransformIntent):
