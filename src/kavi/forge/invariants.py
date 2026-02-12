@@ -145,24 +145,37 @@ def _check_scope(
     proposal_name: str,
     project_root: Path,
 ) -> list[InvariantViolation]:
-    """Check that only expected files were modified (skill + test).
+    """Check that only expected files were modified or created (skill + test).
 
-    Uses git diff --name-only against HEAD. Skipped if not a git repo
-    or no prior commits exist.
+    Uses git diff --name-only against HEAD for tracked changes *and*
+    git ls-files --others for untracked new files.  This prevents a
+    build from sneaking new files into protected directories.
+    Skipped if not a git repo or no prior commits exist.
     """
     violations: list[InvariantViolation] = []
 
     try:
-        result = subprocess.run(  # noqa: S603
+        diff_result = subprocess.run(  # noqa: S603
             ["git", "diff", "--name-only", "HEAD"],
             capture_output=True, text=True, cwd=project_root, timeout=10,
         )
-        if result.returncode != 0:
+        if diff_result.returncode != 0:
             return violations  # Not a git repo or no commits — skip
+
+        untracked_result = subprocess.run(  # noqa: S603
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=project_root, timeout=10,
+        )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return violations  # git not available — skip
 
-    changed = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    changed = {line.strip() for line in diff_result.stdout.splitlines() if line.strip()}
+    if untracked_result.returncode == 0:
+        changed |= {
+            line.strip()
+            for line in untracked_result.stdout.splitlines()
+            if line.strip()
+        }
     if not changed:
         return violations
 

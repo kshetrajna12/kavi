@@ -133,8 +133,8 @@ class TestTrustEnforcement:
         with pytest.raises(TrustError, match="failed trust check"):
             load_skill(reg, "test_skill")
 
-    def test_load_skill_warns_when_no_hash(self, tmp_path: Path) -> None:
-        """Skill loads but warns when registry has no hash (backcompat)."""
+    def test_load_skill_rejects_missing_hash(self, tmp_path: Path) -> None:
+        """Skill refuses to load when registry has no hash."""
         reg = tmp_path / "registry.yaml"
         save_registry(reg, [{
             "name": "test_skill",
@@ -144,14 +144,23 @@ class TestTrustEnforcement:
             "required_secrets": [],
             "version": "1.0.0",
         }])
-        import warnings
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            skill = load_skill(reg, "test_skill")
-        assert skill.name == "test_skill"
-        assert len(w) == 1
-        assert "no hash" in str(w[0].message)
-        assert "trust check skipped" in str(w[0].message)
+        with pytest.raises(TrustError, match="no hash"):
+            load_skill(reg, "test_skill")
+
+    def test_load_skill_rejects_empty_hash(self, tmp_path: Path) -> None:
+        """Skill refuses to load when registry hash is empty string."""
+        reg = tmp_path / "registry.yaml"
+        save_registry(reg, [{
+            "name": "test_skill",
+            "module_path": "tests.test_skills_loader.MockSkill",
+            "description": "A test skill",
+            "side_effect_class": "READ_ONLY",
+            "required_secrets": [],
+            "version": "1.0.0",
+            "hash": "",
+        }])
+        with pytest.raises(TrustError, match="no hash"):
+            load_skill(reg, "test_skill")
 
     def test_load_skill_not_found(self, tmp_path: Path) -> None:
         """KeyError when skill name not in registry."""

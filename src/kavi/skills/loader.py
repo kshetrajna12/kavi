@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
-import warnings
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -49,17 +49,22 @@ def _import_skill(module_path: str) -> type[BaseSkill]:
 def _verify_trust(module_path: str, expected_hash: str) -> None:
     """Re-hash the skill source file and compare against the registry hash.
 
+    Uses importlib.util.find_spec to locate the source file *without*
+    importing (and therefore executing) the module.  This closes the
+    TOCTOU gap where module top-level code ran before the hash was
+    checked.
+
     Raises TrustError if the hash does not match or the source file
     cannot be located.
     """
     parts = module_path.rsplit(".", 1)
     module_name = parts[0]
-    mod = importlib.import_module(module_name)
-    source_file = getattr(mod, "__file__", None)
-    if source_file is None:
+    spec = importlib.util.find_spec(module_name)
+    if spec is None or spec.origin is None:
         raise TrustError(
             f"Cannot locate source file for module '{module_name}'"
         )
+    source_file = spec.origin
     actual_hash = hashlib.sha256(Path(source_file).read_bytes()).hexdigest()
     if actual_hash != expected_hash:
         raise TrustError(
@@ -79,15 +84,12 @@ def load_skill(registry_path: Path, skill_name: str) -> BaseSkill:
     for entry in entries:
         if entry["name"] == skill_name:
             expected_hash = entry.get("hash")
-            if expected_hash:
-                _verify_trust(entry["module_path"], expected_hash)
-            else:
-                warnings.warn(
+            if not expected_hash:
+                raise TrustError(
                     f"Skill '{skill_name}' has no hash in registry — "
-                    "trust check skipped (re-promote to fix)",
-                    UserWarning,
-                    stacklevel=2,
+                    "re-promote to fix"
                 )
+            _verify_trust(entry["module_path"], expected_hash)
             cls = _import_skill(entry["module_path"])
             return cls()
     raise KeyError(f"Skill '{skill_name}' not found in registry")
